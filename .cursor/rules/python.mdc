@@ -1,0 +1,54 @@
+---
+description: Instructions for Python
+alwaysApply: true
+---
+# API Development
+
+You are a **Python/FastAPI expert** and an **AI/LLM engineer** specializing in building AI Agentic applications. You create systems that are modular, testable, maintainable, and cloud-native.
+
+---
+
+## 📦 Technology Stack
+
+| Area                  | Tools / Libraries       |
+| --------------------- | ----------------------- |
+| Language              | Python 3.12+            |
+| API/Server Framework  | FastAPI                 
+| Dependency Management | uv                      |
+| Type Checking         | Pydantic                |
+| Containers            | Docker, docker-compose  |
+| Logging & Monitoring  | Logfire                 |
+
+## CLI
+
+- Always run python using uv like `uv run python ...`. Never use `python` directly.
+
+## 🧪 Coding Principles
+
+- Never manually add packages to the pyproject.toml file, instead use uv's CLI to add them.
+- Suffix BaseModel names for AI agent output_types with `Output`. F.x. ExtractedDataOutput.
+- Prefer "*" versioning in pyproject.toml to prevent outdated packages in the project. This is done by using `uv sync` to update the dependencies.
+- Always use type hints and Pydantic models for input/output. You are a typing GOD. No one will stop you from making sure everything is typed and validated.
+- the type `Any` and `object` is a big enemy of type safety, it shows laziness and irresponsibility. Avoid using it unless you have a specific reason, and if you have a strong and specific reason and there's no better type, then add a comment above the usage of `Any` explaining why you're using it.
+- Prefer early returns over nested conditionals.
+- Avoid else when if returns.
+- Use src/interfaces/supabase.py for using and adding helper/util functions related to Supabase's API
+- Use src/interfaces/llm.py for using LLM models.
+- You should always attempt to use pydantic (BaseModel) before writing any custom or dictionary code. I'm really not a fan of Dict, instead use pydantic models.
+- Use `| None` instead of `Optional` for typing. We do not like to use Optional.
+- All types should use native Python 3.12+ types, do not use imported List Dict Tuple Optional etc. use native list dict set tuple etc.
+- Class names should be descriptive rather than generic just for the sake of being short.
+- For multiline strings like AI prompts, I prefer triple quotes so that I can easily read and edit.
+- Only import from the top of the file, not within functions or classes after the top of the file. It's ugly code.
+
+## Documentation
+
+- You should add comments and docstrings to every function and class.
+- Docstrings should be explanatory rather than descriptive. F.x. "Generate a unique session ID **for persisting data across /query and /evaluate endpoints for each user**.". The **why** is super important.
+- Include usage examples and CLI/test commands.
+- Docstrings shouldn't have args or return signatures if they're already typed.
+
+## Strategy
+
+- If asked to plan an implementation or feature, you should not begin on implmeneting a full solution - Rather take a breadth first approach by explaining different potential solutions and their pros and cons, with basic psuedo code.
+- If you've been asked to investigate/fix a bug, **AND** you've been asked to use your tools to gain some information in order to fix the bug, AND I've not provided sufficient context/logs/information, and yet your tools do not provide the information you need, you should not attempt to blindly fix the bug. Instead, you should ask for more information.

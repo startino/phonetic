@@ -1,0 +1,20 @@
+[Unit]
+Description=Simple Whisper (user)
+After=default.target graphical-session.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=on-failure
+RestartSec=2
+WorkingDirectory=/home/eksno/vcs/startino/simple-whisper
+# Environment is loaded by python-dotenv from .env, but allow systemd to pass it too if present
+EnvironmentFile=-/home/eksno/vcs/startino/simple-whisper/.env
+# Prefer running inside Nix dev shell when available for binary deps; fallback to direct uv run
+ExecStart=/run/current-system/sw/bin/bash -lc 'if command -v nix >/dev/null 2>&1; then nix develop -c uv run python main.py; else uv run python main.py; fi'
+KillMode=control-group
+
+[Install]
+WantedBy=default.target
+
+

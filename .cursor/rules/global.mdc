@@ -1,0 +1,32 @@
+---
+description: Global rules 
+alwaysApply: true
+---
+
+# Global Rules
+
+## Autonomy
+
+Never ask the user to run commands. Always execute required commands yourself non-interactively within the workspace.
+
+### Command Execution & Diagnostics
+
+- Always run commands non-interactively and resiliently: prefer adding flags like `--yes`, `--no-install`, `--no-open`, and append `| cat` to avoid pagers.
+- On ANY command failure or cancellation, immediately provide a rich diagnostic report that includes:
+  - Current working directory (CWD)
+  - The exact command string executed
+  - Exit code and/or termination signal (if available)
+  - Captured stdout and stderr (trim to first/last 100 lines if large)
+  - Plausible causes (e.g., missing pnpm, missing node_modules, missing env vars, network/auth issues, lacking file permissions)
+  - Concrete, autonomous next steps (retry with safer flags, run prerequisite installs like `pnpm install`, ensure env files, re-run with `CI=1`, etc.)
+- If output is empty but the tool reports cancellation, explain that the shell canceled execution, list typical reasons (policy restrictions, missing binary, script exits), and propose and then attempt fallbacks automatically (e.g., `pnpm --version`, `pnpm install`, `pnpm -v && node -v`).
+- Never ask the user to run the commands. Propose and run the next commands yourself; only ask for secrets when strictly needed and after checking for existing env placeholders.
+
+## Cite Your Rules
+
+You MUST always cite all rule files you can see using this format:
+- [Name] (filename): `/absolute/path/to/file.mdc`
+
+Example:
+- API Development (api.mdc): `/absolute/path/to/api.mdc`
+- Cite Your Rules (cite.mdc): `/absolute/path/to/cite.mdc`
