@@ -41,6 +41,16 @@ class Config:
     azure_api_version: str
     azure_task: str
     notify: bool
+    whisper_prompt: Optional[str]
+    # Optional post-process settings
+    postprocess_provider: Optional[str]
+    postprocess_model: Optional[str]
+    postprocess_instruction: Optional[str]
+    postprocess_openai_api_key: Optional[str]
+    postprocess_azure_endpoint: Optional[str]
+    postprocess_azure_api_key: Optional[str]
+    postprocess_azure_deployment: Optional[str]
+    postprocess_azure_api_version: Optional[str]
 
 
 def load_config() -> Config:
@@ -66,6 +76,17 @@ def load_config() -> Config:
         azure_api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
         azure_task=os.getenv("AZURE_OPENAI_TASK", "transcriptions").strip().lower(),
         notify=os.getenv("NOTIFY", "1").strip() not in {"0", "false", "no"},
+        whisper_prompt=(os.getenv("WHISPER_PROMPT") or None),
+        # Default provider to the same one used for Whisper if not set
+        postprocess_provider=(os.getenv("POSTPROCESS_PROVIDER") or provider),
+        postprocess_model=(os.getenv("POSTPROCESS_MODEL") or None),
+        postprocess_instruction=(os.getenv("POSTPROCESS_INSTRUCTION") or None),
+        # Default API keys/endpoints to Whisper's envs for convenience
+        postprocess_openai_api_key=(os.getenv("POSTPROCESS_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") or None),
+        postprocess_azure_endpoint=(os.getenv("POSTPROCESS_AZURE_ENDPOINT") or os.getenv("AZURE_OPENAI_ENDPOINT") or None),
+        postprocess_azure_api_key=(os.getenv("POSTPROCESS_AZURE_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY") or None),
+        postprocess_azure_deployment=(os.getenv("POSTPROCESS_AZURE_DEPLOYMENT") or os.getenv("AZURE_OPENAI_DEPLOYMENT") or None),
+        postprocess_azure_api_version=(os.getenv("POSTPROCESS_AZURE_API_VERSION") or os.getenv("AZURE_OPENAI_API_VERSION") or None),
     )
 
 
@@ -151,7 +172,7 @@ def save_wav(audio: np.ndarray, sample_rate: int) -> str:
     return path
 
 
-def transcribe_openai(file_path: str, api_key: str) -> str:
+def transcribe_openai(file_path: str, api_key: str, prompt: Optional[str]) -> str:
     url = "https://api.openai.com/v1/audio/transcriptions"
     headers = {"Authorization": f"Bearer {api_key}"}
     with open(file_path, "rb") as f:
@@ -159,6 +180,8 @@ def transcribe_openai(file_path: str, api_key: str) -> str:
             "file": (os.path.basename(file_path), f, "audio/wav"),
         }
         data = {"model": "whisper-1"}
+        if prompt:
+            data["prompt"] = prompt
         with httpx.Client(timeout=300) as client:
             resp = client.post(url, headers=headers, files=files, data=data)
             resp.raise_for_status()
@@ -167,7 +190,7 @@ def transcribe_openai(file_path: str, api_key: str) -> str:
             return j.get("text") or j.get("transcript") or ""
 
 
-def transcribe_azure(file_path: str, endpoint: str, api_key: str, deployment: str, api_version: str, task: str) -> str:
+def transcribe_azure(file_path: str, endpoint: str, api_key: str, deployment: str, api_version: str, task: str, prompt: Optional[str]) -> str:
     """
     Handle Azure endpoint variants:
     - If `endpoint` is a base resource URL (e.g., https://<resource>.openai.azure.com), build the standard path
@@ -191,11 +214,70 @@ def transcribe_azure(file_path: str, endpoint: str, api_key: str, deployment: st
         }
         # Azure ignores model in body, uses deployment; response mirrors OpenAI
         data = {}
+        if prompt:
+            data["prompt"] = prompt
         with httpx.Client(timeout=300) as client:
             resp = client.post(url, headers=headers, files=files, data=data)
             resp.raise_for_status()
             j = resp.json()
             return j.get("text") or j.get("transcript") or ""
+
+
+def postprocess_text(cfg: Config, original: str) -> Optional[str]:
+    """Optionally rewrite the transcript using an LLM according to instruction.
+
+    Returns the rewritten text, or None if not configured or on failure.
+    """
+    provider = (cfg.postprocess_provider or "").strip().lower()
+    instruction = (cfg.postprocess_instruction or "").strip()
+    model = (cfg.postprocess_model or "").strip()
+    if not provider or not instruction or not model:
+        return None
+
+    try:
+        if provider == "openai":
+            api_key = cfg.postprocess_openai_api_key
+            if not api_key:
+                return None
+            url = "https://api.openai.com/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": instruction},
+                    {"role": "user", "content": original},
+                ],
+                "temperature": 0.2,
+            }
+            with httpx.Client(timeout=120) as client:
+                r = client.post(url, headers=headers, json=payload)
+                r.raise_for_status()
+                data = r.json()
+                return (data.get("choices") or [{}])[0].get("message", {}).get("content")
+
+        if provider == "azure":
+            if not (cfg.postprocess_azure_endpoint and cfg.postprocess_azure_api_key and cfg.postprocess_azure_deployment and cfg.postprocess_azure_api_version):
+                return None
+            base = cfg.postprocess_azure_endpoint.rstrip("/")
+            url = f"{base}/openai/deployments/{cfg.postprocess_azure_deployment}/chat/completions?api-version={cfg.postprocess_azure_api_version}"
+            headers = {"api-key": cfg.postprocess_azure_api_key, "Content-Type": "application/json"}
+            payload = {
+                "messages": [
+                    {"role": "system", "content": instruction},
+                    {"role": "user", "content": original},
+                ],
+                "temperature": 0.2,
+            }
+            with httpx.Client(timeout=120) as client:
+                r = client.post(url, headers=headers, json=payload)
+                r.raise_for_status()
+                data = r.json()
+                # Azure returns same schema for chat/completions
+                return (data.get("choices") or [{}])[0].get("message", {}).get("content")
+    except Exception:
+        return None
+
+    return None
 
 
 def main() -> None:
@@ -241,7 +323,7 @@ def main() -> None:
             try:
                 if cfg.provider == "openai":
                     assert cfg.openai_api_key is not None
-                    text = transcribe_openai(wav_path, cfg.openai_api_key)
+                    text = transcribe_openai(wav_path, cfg.openai_api_key, cfg.whisper_prompt)
                 else:
                     assert cfg.azure_endpoint and cfg.azure_api_key and cfg.azure_deployment
                     text = transcribe_azure(
@@ -251,6 +333,7 @@ def main() -> None:
                         cfg.azure_deployment,
                         cfg.azure_api_version,
                         cfg.azure_task,
+                        cfg.whisper_prompt,
                     )
                 text = (text or "").strip()
                 if text:
@@ -270,6 +353,19 @@ def main() -> None:
                     print("Empty transcription.")
                     if cfg.notify and sys.platform.startswith("linux"):
                         notify_linux("Simple Whisper", "Empty transcription", "low")
+                # Optional post-process using LLM to restyle text
+                if text:
+                    refined = postprocess_text(cfg, text)
+                    if refined:
+                        try:
+                            pyperclip.copy(refined)
+                            print("Post-processed transcription copied to clipboard.")
+                            if cfg.notify and sys.platform.startswith("linux"):
+                                p2 = refined if len(refined) <= 120 else refined[:117] + "..."
+                                notify_linux("Simple Whisper", f"Copied (restyled): {p2}", "normal")
+                        except Exception:
+                            pass
+                
             except httpx.HTTPError as e:
                 print(f"HTTP error: {e}", file=sys.stderr)
                 if cfg.notify and sys.platform.startswith("linux"):

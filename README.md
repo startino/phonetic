@@ -92,6 +92,38 @@ Example: bind `<ctrl>+<alt>+r` in your desktop keyboard settings to run the comm
 
 When running under X11/Xwayland, the app will use a global grab with your `HOTKEY` directly.
 
+### Notifications
+
+On Linux, the app will send desktop notifications when recording starts/stops and after transcription. This uses `notify-send` if available. To disable notifications, set `NOTIFY=0` in your `.env`.
+
+### Prompting and Post-process
+
+- `WHISPER_PROMPT`: Initial prompt to bias recognition (product names, terms, etc.).
+- Optional post-process with an LLM to restyle the output (disabled by default). The raw Whisper transcript is copied to the clipboard immediately; if post-process is configured, the refined text will overwrite the clipboard after it finishes.
+
+Env options:
+
+```env
+# [Bias Whisper terminology](https://cookbook.openai.com/examples/whisper_prompting_guide)
+WHISPER_PROMPT="Use American English spelling; names: Jorge; terms: Kubernetes, Nix, Wayland"
+
+# Post-process (OpenAI)
+# If POSTPROCESS_PROVIDER is unset, it defaults to WHISPER_PROVIDER
+# If using OpenAI and POSTPROCESS_OPENAI_API_KEY is unset, it defaults to OPENAI_API_KEY
+POSTPROCESS_PROVIDER=openai
+POSTPROCESS_MODEL=gpt-5-nano
+POSTPROCESS_INSTRUCTION="Rewrite concisely in bullet points; fix grammar; keep meaning."
+# POSTPROCESS_OPENAI_API_KEY=sk-...
+
+# Post-process (Azure OpenAI)
+# POSTPROCESS_PROVIDER=azure
+# If using Azure and POSTPROCESS_AZURE_* are unset, they default to AZURE_OPENAI_*
+# POSTPROCESS_AZURE_ENDPOINT=https://<resource>.openai.azure.com
+# POSTPROCESS_AZURE_API_KEY=...
+# POSTPROCESS_AZURE_DEPLOYMENT=<chat-deployment>
+# POSTPROCESS_AZURE_API_VERSION=2024-06-01
+```
+
 ### Clipboard
 
 This tool copies the transcript to the system clipboard using `pyperclip`. On Linux, you may need one of the following packages installed for clipboard support:
