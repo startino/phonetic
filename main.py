@@ -390,7 +390,7 @@ def main() -> None:
         print(f"Session: {session_type or 'unknown'}")
 
         # Signal-based toggle setup (used on Wayland; also helpful generally)
-        pidfile_dir = Path.home() / ".cache" / "simple-whisper"
+        pidfile_dir = Path.home() / ".cache" / "phonetic"
         pidfile_dir.mkdir(parents=True, exist_ok=True)
         pidfile_path = pidfile_dir / "pid"
 

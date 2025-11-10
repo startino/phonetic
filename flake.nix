@@ -1,5 +1,5 @@
 {
-  description = "Dev shell for simple-whisper with uv and system libs (NumPy, PortAudio, libsndfile)";
+  description = "Dev shell for phonetic with uv and system libs (NumPy, PortAudio, libsndfile)";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
 
@@ -40,8 +40,8 @@
 
           shellHook = ''
             export LD_LIBRARY_PATH=${libPath}:$LD_LIBRARY_PATH
-            echo "simple-whisper dev shell: LD_LIBRARY_PATH prepared for NumPy/PortAudio/libsndfile"
-            echo "Use: uv pip install -e . | cat && uv run simple-whisper | cat"
+            echo "phonetic dev shell: LD_LIBRARY_PATH prepared for NumPy/PortAudio/libsndfile"
+            echo "Use: uv pip install -e . | cat && uv run phonetic | cat"
           '';
         };
       });

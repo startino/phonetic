@@ -1,5 +1,5 @@
 [project]
-name = "simple-whisper"
+name = "phonetic"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -16,8 +16,8 @@ dependencies = [
 ]
 
 [project.scripts]
-simple-whisper = "main:main"
+phonetic = "main:main"
 
 [tool.simple_whisper]
 # Path to project working directory when running as a service
-working_directory = "/home/eksno/vcs/startino/simple-whisper"
+working_directory = "/home/eksno/vcs/startino/phonetic"

@@ -1,4 +1,4 @@
-# simple-whisper configuration example
+# phonetic configuration example
 # Copy this to .env and edit values as needed.
 
 # Provider for Whisper transcription: 'openai' or 'azure'

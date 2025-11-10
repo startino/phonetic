@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SERVICE_NAME="simple-whisper.service"
+SERVICE_NAME="phonetic.service"
 UNIT_SRC="$(dirname "$0")/contrib/systemd/$SERVICE_NAME"
 UNIT_DST="$HOME/.config/systemd/user/$SERVICE_NAME"
 

@@ -336,7 +336,7 @@ wheels = [
 ]
 
 [[package]]
-name = "simple-whisper"
+name = "phonetic"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

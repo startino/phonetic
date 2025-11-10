@@ -1,4 +1,4 @@
-# simple-whisper
+# phonetic
 
 Hotkey-based speech-to-text tool using cloud Whisper (OpenAI or Azure OpenAI). Start/stop recording with a configurable keybind; transcription is copied to clipboard.
 
@@ -40,7 +40,7 @@ OPENAI_API_KEY=sk-...
 With script installed into your environment:
 
 ```bash
-uv run simple-whisper | cat
+uv run phonetic | cat
 ```
 
 Or directly with Python via uv:
@@ -62,9 +62,9 @@ Steps (one time):
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp contrib/systemd/simple-whisper.service ~/.config/systemd/user/
+cp contrib/systemd/phonetic.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now simple-whisper.service
+systemctl --user enable --now phonetic.service
 ```
 
 The service uses your project as WorkingDirectory and reads environment from `.env`. It runs `uv run python main.py`. On Nix systems with a dev shell, it uses that environment automatically.
@@ -79,13 +79,13 @@ The service uses your project as WorkingDirectory and reads environment from `.e
 
 Under Wayland, global key grabs are typically blocked for security. This app detects Wayland and exposes a signal-based toggle:
 
-- It writes a PID file at `~/.cache/simple-whisper/pid`.
+- It writes a PID file at `~/.cache/phonetic/pid`.
 - Sending `SIGUSR1` to that PID toggles recording.
 
 You can create a desktop shortcut or WM keybinding that runs:
 
 ```bash
-kill -USR1 "$(cat ~/.cache/simple-whisper/pid)"
+kill -USR1 "$(cat ~/.cache/phonetic/pid)"
 ```
 
 Example: bind `<ctrl>+<alt>+r` in your desktop keyboard settings to run the command above.
