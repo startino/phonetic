@@ -32,6 +32,7 @@
             pkgs.alsaLib
             pkgs.libpulseaudio
             pkgs.xclip
+            pkgs.wl-clipboard
             pkgs.xorg.libX11
             pkgs.xorg.libXext
             pkgs.xorg.libXrender
