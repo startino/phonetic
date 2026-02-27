@@ -1,134 +1,69 @@
 # phonetic
 
-Hotkey-based speech-to-text tool using cloud Whisper (OpenAI or Azure OpenAI). Start/stop recording with a configurable keybind; transcription is copied to clipboard.
+Hotkey-based speech-to-text using a multimodal LLM (Gemini via OpenRouter). Press a keybind to record, press again to stop — transcription is copied to your clipboard.
 
-## Configure
+Audio is sent to a multimodal model that handles both transcription and formatting (punctuation, paragraphs, filler removal) in a single step.
 
-Set environment variables (optionally via a `.env` file next to `main.py`):
+## Setup
 
-- `WHISPER_PROVIDER`: `openai` or `azure` (default: `openai`)
-- `HOTKEY`: Global toggle, e.g. `<ctrl>+<alt>+r` (default)
-- `SAMPLE_RATE`: e.g. `16000` (default)
-- `CHANNELS`: `1` mono or `2` stereo (default `1`)
-
-For OpenAI provider:
-
-- `OPENAI_API_KEY`: your OpenAI API key
-
-For Azure OpenAI provider:
-
-- `AZURE_OPENAI_ENDPOINT`: like `https://your-resource-name.openai.azure.com`
-- `AZURE_OPENAI_API_KEY`: your Azure key
-- `AZURE_OPENAI_DEPLOYMENT`: your Whisper deployment name
-- `AZURE_OPENAI_API_VERSION`: default `2024-02-15-preview`
- - `AZURE_OPENAI_TASK`: `transcriptions` (default) or `translations`
-
-You may also paste the full Target URI from Azure Studio into `AZURE_OPENAI_ENDPOINT`. If it already contains `/audio/transcriptions` or `/audio/translations` and an `api-version`, the app will use it as-is.
-
-You can create a `.env` file:
+1. Get an API key from [OpenRouter](https://openrouter.ai/settings/keys)
+2. Copy `.env.example` to `.env` and fill in your key:
 
 ```env
-WHISPER_PROVIDER=openai
-HOTKEY=<ctrl>+<alt>+r
-SAMPLE_RATE=16000
-CHANNELS=1
-OPENAI_API_KEY=sk-...
+OPENROUTER_API_KEY=sk-or-v1-...
 ```
+
+That's it. Sample rate and channels are auto-detected from your default microphone.
+
+### Optional settings
+
+Set in `.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MODEL` | `google/gemini-3-flash-preview` | OpenRouter model ID |
+| `HOTKEY` | `<ctrl>+<alt>+r` | Toggle keybind (X11) |
+| `NOTIFY` | `1` | Desktop notifications (`0` to disable) |
 
 ## Run
 
-With script installed into your environment:
-
 ```bash
-uv run phonetic | cat
+uv run phonetic
 ```
 
-Or directly with Python via uv:
+Or directly:
 
 ```bash
-uv run python main.py | cat
+uv run python main.py
 ```
 
-The app shows: "Ready. Press <hotkey> to start/stop recording. Press <esc> to exit." Press the hotkey to toggle recording; on stop, transcription is sent to your provider and copied to the clipboard.
-
-## Autostart as a user service (systemd)
-
-This repo includes a convenient systemd user service. It launches the app in your session and keeps it running.
-
-Steps (one time):
-
-1) Ensure your `.env` is set up in the project directory.
-2) Install the service and start it:
+## Autostart as a systemd user service
 
 ```bash
-mkdir -p ~/.config/systemd/user
-cp contrib/systemd/phonetic.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now phonetic.service
+./service.sh
 ```
 
-The service uses your project as WorkingDirectory and reads environment from `.env`. It runs `uv run python main.py`. On Nix systems with a dev shell, it uses that environment automatically.
+This installs and starts the service. Other commands:
 
-## Notes
+```bash
+./service.sh status   # show status and logs
+./service.sh remove   # stop and uninstall
+```
 
-- On Linux/macOS, global hotkeys are handled by `pynput`. On Windows, the project uses the `keyboard` package (declared conditionally) but current implementation uses `pynput` for all platforms; if you prefer `keyboard` on Windows, we can switch based on OS.
-- Audio is recorded via your default input device using `sounddevice` at the configured sample rate/channels and temporarily saved to a WAV file during upload.
-- Errors are printed to stderr; the app keeps running so you can retry.
+## Wayland
 
-### Wayland (Linux)
-
-Under Wayland, global key grabs are typically blocked for security. This app detects Wayland and exposes a signal-based toggle:
-
-- It writes a PID file at `~/.cache/phonetic/pid`.
-- Sending `SIGUSR1` to that PID toggles recording.
-
-You can create a desktop shortcut or WM keybinding that runs:
+Global key grabs are blocked on Wayland. The app writes a PID file at `~/.cache/phonetic/pid` and listens for `SIGUSR1`. Bind this in your desktop keyboard settings:
 
 ```bash
 kill -USR1 "$(cat ~/.cache/phonetic/pid)"
 ```
 
-Example: bind `<ctrl>+<alt>+r` in your desktop keyboard settings to run the command above.
+On X11/XWayland, the `HOTKEY` keybind works directly.
 
-When running under X11/Xwayland, the app will use a global grab with your `HOTKEY` directly.
+## Clipboard
 
-### Notifications
+On Linux, clipboard access requires `wl-copy` (Wayland) or `xclip` (X11). On other platforms, `pyperclip` is used.
 
-On Linux, the app will send desktop notifications when recording starts/stops and after transcription. This uses `notify-send` if available. To disable notifications, set `NOTIFY=0` in your `.env`.
+## Notifications
 
-### Prompting and Post-process
-
-- `WHISPER_PROMPT`: Initial prompt to bias recognition (product names, terms, etc.).
-- Optional post-process with an LLM to restyle the output (disabled by default). The raw Whisper transcript is copied to the clipboard immediately; if post-process is configured, the refined text will overwrite the clipboard after it finishes.
-
-Env options:
-
-```env
-# [Bias Whisper terminology](https://cookbook.openai.com/examples/whisper_prompting_guide)
-WHISPER_PROMPT="Use American English spelling; names: Jorge; terms: Kubernetes, Nix, Wayland"
-
-# Post-process (OpenAI)
-# If POSTPROCESS_PROVIDER is unset, it defaults to WHISPER_PROVIDER
-# If using OpenAI and POSTPROCESS_OPENAI_API_KEY is unset, it defaults to OPENAI_API_KEY
-POSTPROCESS_PROVIDER=openai
-POSTPROCESS_MODEL=gpt-5-nano
-POSTPROCESS_INSTRUCTION="Rewrite concisely in bullet points; fix grammar; keep meaning."
-# POSTPROCESS_OPENAI_API_KEY=sk-...
-
-# Post-process (Azure OpenAI)
-# POSTPROCESS_PROVIDER=azure
-# If using Azure and POSTPROCESS_AZURE_* are unset, they default to AZURE_OPENAI_*
-# POSTPROCESS_AZURE_ENDPOINT=https://<resource>.openai.azure.com
-# POSTPROCESS_AZURE_API_KEY=...
-# POSTPROCESS_AZURE_DEPLOYMENT=<chat-deployment>
-# POSTPROCESS_AZURE_API_VERSION=2024-06-01
-```
-
-### Clipboard
-
-This tool copies the transcript to the system clipboard using `pyperclip`. On Linux, you may need one of the following packages installed for clipboard support:
-
-- `xclip`
-- `xsel`
-
-If neither is present, the app will print the transcription to stdout and a warning to stderr instead of failing.
+On Linux, desktop notifications are sent via `notify-send` when recording starts/stops and after transcription. Set `NOTIFY=0` to disable.
