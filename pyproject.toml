@@ -1,7 +1,7 @@
 [project]
 name = "phonetic"
 version = "0.1.0"
-description = "Add your description here"
+description = "Hotkey-based speech-to-text via multimodal LLM"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,14 +10,10 @@ dependencies = [
     "numpy",
     "pynput; sys_platform != 'linux'",
     "python-xlib; sys_platform == 'linux'",
-    "pyperclip",
+    "pyperclip; sys_platform != 'linux'",
     "python-dotenv",
     "httpx",
 ]
 
 [project.scripts]
 phonetic = "main:main"
-
-[tool.simple_whisper]
-# Path to project working directory when running as a service
-working_directory = "/home/eksno/vcs/startino/phonetic"
