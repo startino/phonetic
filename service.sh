@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SERVICE_NAME="phonetic.service"
-UNIT_SRC="$(dirname "$0")/contrib/systemd/$SERVICE_NAME"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+UNIT_SRC="$PROJECT_DIR/contrib/systemd/$SERVICE_NAME"
 UNIT_DST="$HOME/.config/systemd/user/$SERVICE_NAME"
 
 cmd_remove() {
@@ -33,8 +34,8 @@ cmd_upsert() {
     exit 1
   fi
 
-  echo "Installing/Updating unit at $UNIT_DST"
-  cp -f "$UNIT_SRC" "$UNIT_DST"
+  echo "Installing/Updating unit at $UNIT_DST (project: $PROJECT_DIR)"
+  sed "s|@PROJECT_DIR@|$PROJECT_DIR|g" "$UNIT_SRC" > "$UNIT_DST"
   echo "Reloading user units..."
   systemctl --user daemon-reload
   echo "Enabling and starting $SERVICE_NAME..."
@@ -60,5 +61,3 @@ case "${1:-}" in
     exit 2
     ;;
 esac
-
-
