@@ -10,7 +10,7 @@ RestartSec=2
 WorkingDirectory=@PROJECT_DIR@
 EnvironmentFile=-@PROJECT_DIR@/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/run/current-system/sw/bin/bash -lc 'if command -v nix >/dev/null 2>&1; then nix develop -c uv run python main.py; else uv run python main.py; fi'
+ExecStart=/run/current-system/sw/bin/bash -lc 'if command -v nix >/dev/null 2>&1; then nix develop -c uv run phonetic --headless; else uv run phonetic --headless; fi'
 KillMode=control-group
 
 [Install]

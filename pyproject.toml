@@ -1,6 +1,6 @@
 [project]
 name = "phonetic"
-version = "0.1.0"
+version = "0.2.0"
 description = "Hotkey-based speech-to-text via multimodal LLM"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -8,12 +8,24 @@ dependencies = [
     "sounddevice",
     "soundfile",
     "numpy",
-    "pynput; sys_platform != 'linux'",
-    "python-xlib; sys_platform == 'linux'",
+    "pynput",
     "pyperclip; sys_platform != 'linux'",
     "python-dotenv",
     "httpx",
+    "pystray",
+    "Pillow",
+    "customtkinter",
+    "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices; sys_platform == 'darwin'",
+]
+
+[project.optional-dependencies]
+build = [
+    "pyinstaller",
 ]
 
 [project.scripts]
-phonetic = "main:main"
+phonetic = "phonetic.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["phonetic*"]

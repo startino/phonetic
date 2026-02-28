@@ -1,5 +1,5 @@
 {
-  description = "Dev shell for phonetic with uv and system libs (NumPy, PortAudio, libsndfile)";
+  description = "Dev shell for phonetic with uv and system libs (NumPy, PortAudio, libsndfile, tkinter, pystray)";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
 
@@ -21,6 +21,11 @@
           pkgs.xorg.libX11
           pkgs.xorg.libXext
           pkgs.xorg.libXrender
+          pkgs.gobject-introspection
+          pkgs.gtk3
+          pkgs.libappindicator-gtk3
+          pkgs.tcl
+          pkgs.tk
         ];
       in {
         default = pkgs.mkShell {
@@ -37,16 +42,23 @@
             pkgs.xorg.libXext
             pkgs.xorg.libXrender
             pkgs.pkg-config
+            pkgs.gobject-introspection
+            pkgs.gtk3
+            pkgs.libappindicator-gtk3
+            pkgs.python312Packages.tkinter
+            pkgs.tcl
+            pkgs.tk
+            pkgs.linuxHeaders
           ];
 
           shellHook = ''
             export LD_LIBRARY_PATH=${libPath}:$LD_LIBRARY_PATH
-            echo "phonetic dev shell: LD_LIBRARY_PATH prepared for NumPy/PortAudio/libsndfile"
+            export C_INCLUDE_PATH="${pkgs.linuxHeaders}/include''${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}"
+            export GI_TYPELIB_PATH="${pkgs.libappindicator-gtk3}/lib/girepository-1.0:${pkgs.gtk3}/lib/girepository-1.0:${pkgs.glib}/lib/girepository-1.0''${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
+            echo "phonetic dev shell: LD_LIBRARY_PATH prepared for NumPy/PortAudio/libsndfile/tkinter/pystray"
             echo "Use: uv pip install -e . | cat && uv run phonetic | cat"
           '';
         };
       });
     };
 }
-
-

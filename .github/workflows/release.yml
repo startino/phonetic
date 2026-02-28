@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            name: macos-arm64
+            script: packaging/build_macos.sh
+            artifact: dist/Phonetic.dmg
+          - os: macos-13
+            name: macos-x64
+            script: packaging/build_macos.sh
+            artifact: dist/Phonetic.dmg
+          - os: windows-latest
+            name: windows-x64
+            script: packaging/build_windows.bat
+            artifact: dist/phonetic-windows.zip
+          - os: ubuntu-22.04
+            name: linux-x64
+            script: packaging/build_linux.sh
+            artifact: dist/phonetic_*_amd64.deb
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[build]"
+
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libportaudio2 libsndfile1 python3-tk \
+            libgirepository1.0-dev gir1.2-ayatanaappindicator3-0.1
+
+      - name: Generate icons
+        run: python assets/generate_icons.py
+
+      - name: Build
+        run: ${{ matrix.script }}
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phonetic-${{ matrix.name }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
