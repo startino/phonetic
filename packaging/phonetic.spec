@@ -84,7 +84,7 @@ if sys.platform == 'darwin':
         bundle_identifier='com.startino.phonetic',
         info_plist={
             'LSUIElement': True,
-            'CFBundleShortVersionString': '0.2.0',
+            'CFBundleShortVersionString': '0.3.0',
             'CFBundleName': 'Phonetic',
         },
     )

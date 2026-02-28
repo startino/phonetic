@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 DIST="$ROOT/dist"
-VERSION="0.2.0"
+VERSION="0.3.0"
 
 echo "Building Linux binary..."
 cd "$ROOT"
