@@ -70,11 +70,3 @@ Include how to:
 """
 
 
-def print_wayland_notice() -> None:
-    """Print a concise Wayland startup notice."""
-    pid_path = _pid_file_path()
-    print(
-        f"Wayland detected — global hotkeys use SIGUSR1 mode.\n"
-        f"  Toggle recording:  kill -USR1 $(cat {pid_path})\n"
-        f"  Setup guide:       phonetic --setup"
-    )

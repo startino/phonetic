@@ -77,17 +77,11 @@ class SettingsWindow(ctk.CTkToplevel):
         )
         ctk.CTkEntry(self, textvariable=self._hotkey_var).pack(fill="x", padx=16, pady=(0, 4))
 
-        # Wayland note: hotkey must be configured via DE settings
+        # Wayland setup section: interactive SIGUSR1 command + AI prompt copy
         if sys.platform.startswith("linux"):
             from ..platform_utils import _is_wayland
             if _is_wayland():
-                ctk.CTkLabel(
-                    self,
-                    text="On Wayland, bind this hotkey in your DE settings. Run 'phonetic --setup' for help.",
-                    font=ctk.CTkFont(size=11),
-                    text_color="gray",
-                    anchor="w",
-                ).pack(fill="x", padx=16, pady=(0, 4))
+                self._build_wayland_section(pad)
 
         # Notifications
         self._notify_var = ctk.BooleanVar(value=self._config.notify if self._config else True)
@@ -133,6 +127,46 @@ class SettingsWindow(ctk.CTkToplevel):
             hover_color=("gray80", "gray30"),
             command=self._on_cancel,
         ).pack(side="right")
+
+    def _build_wayland_section(self, pad: dict) -> None:
+        """Build the Wayland SIGUSR1 setup section."""
+        from ..setup_prompt import _pid_file_path, generate_setup_prompt
+
+        frame = ctk.CTkFrame(self)
+        frame.pack(fill="x", padx=16, pady=(4, 4))
+
+        ctk.CTkLabel(
+            frame,
+            text="On Wayland, Phonetic uses SIGUSR1 for hotkey toggling.\n"
+                 "Bind this command in your DE's keyboard settings:",
+            font=ctk.CTkFont(size=12),
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", padx=12, pady=(8, 4))
+
+        pid_path = _pid_file_path()
+        sigusr1_cmd = f"kill -USR1 $(cat {pid_path})"
+
+        cmd_entry = ctk.CTkEntry(frame, font=ctk.CTkFont(family="monospace", size=12))
+        cmd_entry.insert(0, sigusr1_cmd)
+        cmd_entry.configure(state="disabled")
+        cmd_entry.pack(fill="x", padx=12, pady=(0, 4))
+
+        btn_row = ctk.CTkFrame(frame, fg_color="transparent")
+        btn_row.pack(fill="x", padx=12, pady=(0, 8))
+
+        def copy_command():
+            self.clipboard_clear()
+            self.clipboard_append(sigusr1_cmd)
+
+        def copy_ai_prompt():
+            hotkey = self._hotkey_var.get().strip()
+            prompt = generate_setup_prompt(hotkey)
+            self.clipboard_clear()
+            self.clipboard_append(prompt)
+
+        ctk.CTkButton(btn_row, text="Copy Command", width=130, command=copy_command).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btn_row, text="Copy AI Prompt", width=130, command=copy_ai_prompt).pack(side="left")
 
     def _toggle_key_visibility(self) -> None:
         self._show_key = not self._show_key

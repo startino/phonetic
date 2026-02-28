@@ -68,9 +68,6 @@ class _PidFileMixin:
 
         atexit.register(self._cleanup_pidfile)
 
-        if self._pidfile_path.exists():
-            print(f"Signal toggle: kill -USR1 $(cat {self._pidfile_path})")
-
     def _cleanup_pidfile(self) -> None:
         """Remove the PID file."""
         if self._pidfile_path is not None:
@@ -132,8 +129,6 @@ class _SignalOnlyHotkeyManager(_PidFileMixin):
 
     def start(self) -> None:
         self._setup_sigusr1(self._on_toggle)
-        from .setup_prompt import print_wayland_notice
-        print_wayland_notice()
 
     def stop(self) -> None:
         self._cleanup_pidfile()

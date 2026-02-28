@@ -132,10 +132,7 @@ class App:
         # Check for updates in the background
         threading.Thread(target=self._check_for_update, daemon=True).start()
 
-        if self._hotkeys.signal_only:
-            print("Ready. Waiting for SIGUSR1 to start/stop recording.")
-        else:
-            print(f"Ready. Press {self._cfg.hotkey} to start/stop recording.")
+        print(f"Ready. Press {self._cfg.hotkey} to start/stop recording.")
 
     def _check_for_update(self) -> None:
         from . import __version__
@@ -349,7 +346,6 @@ class App:
 
         if self._hotkeys.signal_only:
             print("Ready. Waiting for SIGUSR1 to start/stop recording.")
-            print("Tip: run 'phonetic --setup' for hotkey binding instructions.")
         else:
             print(f"Ready. Press {cfg.hotkey} to start/stop recording.")
             if sys.platform.startswith("linux"):
