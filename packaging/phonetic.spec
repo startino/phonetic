@@ -6,6 +6,13 @@ block_cipher = None
 
 root = Path(SPECPATH).parent
 
+# Read version from pyproject.toml (single source of truth)
+_version = "0.0.0"
+for line in (root / "pyproject.toml").read_text().splitlines():
+    if line.strip().startswith("version"):
+        _version = line.split("=", 1)[1].strip().strip('"')
+        break
+
 a = Analysis(
     [str(root / 'main.py')],
     pathex=[str(root)],
@@ -84,7 +91,7 @@ if sys.platform == 'darwin':
         bundle_identifier='com.startino.phonetic',
         info_plist={
             'LSUIElement': True,
-            'CFBundleShortVersionString': '0.3.0',
+            'CFBundleShortVersionString': _version,
             'CFBundleName': 'Phonetic',
         },
     )
