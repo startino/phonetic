@@ -1,5 +1,4 @@
 import subprocess
-import sys
 from typing import Optional
 
 import sounddevice as sd
@@ -49,5 +48,4 @@ def detect_audio() -> tuple[int, int, Optional[int]]:
         print(f"Audio device: {dev['name']}")
         return int(dev["default_samplerate"]), 1, None
     except Exception as e:
-        print(f"No audio input device found: {e}", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"No audio input device found: {e}") from e
