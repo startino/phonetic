@@ -73,12 +73,12 @@ class TrayManager:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 lambda _: "Stop Recording" if self._recording else "Start Recording",
-                lambda: self._msg_queue.put("toggle_recording"),
+                lambda _icon, _item: self._msg_queue.put("toggle_recording"),
             ),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Settings...", lambda: self._msg_queue.put("show_settings")),
+            pystray.MenuItem("Settings...", lambda _icon, _item: self._msg_queue.put("show_settings")),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Quit", lambda: self._msg_queue.put("quit")),
+            pystray.MenuItem("Quit", lambda _icon, _item: self._msg_queue.put("quit")),
         )
 
     def set_state(self, recording: bool) -> None:
@@ -88,7 +88,7 @@ class TrayManager:
             self._icon.icon = self._recording_icon if recording else self._idle_icon
             self._icon.update_menu()
 
-    def notify_msg(self, title: str, body: str) -> None:
+    def notify(self, title: str, body: str) -> None:
         """Show a tray notification."""
         if self._icon is not None:
             try:
