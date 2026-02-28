@@ -1,13 +1,12 @@
 import queue
 import sys
 import threading
-import time
 from typing import Optional
 
 import numpy as np
 
 from .clipboard import copy_to_clipboard
-from .config import Config, load_config, save_config
+from .config import Config, load_config
 from .constants import MIN_DURATION_SECS, WARN_DURATION_SECS
 from .hotkeys import HotkeyManager
 from .notifications import notify
@@ -29,6 +28,7 @@ class App:
         self._cfg: Optional[Config] = None
         self._rec: Optional[Recorder] = None
         self._processing = False
+        self._processing_lock = threading.Lock()
         self._tray: Optional[TrayManager] = None
         self._hotkeys: Optional[HotkeyManager] = None
         self._root: Optional[object] = None  # tk.Tk when in GUI mode
@@ -56,7 +56,14 @@ class App:
             self._hide_macos_dock()
 
         # Load config (or trigger first-run)
-        self._cfg = load_config(require_key=True)
+        try:
+            self._cfg = load_config(require_key=True)
+        except RuntimeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            from tkinter import messagebox
+            messagebox.showerror("Phonetic", str(e))
+            self._root.quit()
+            return
 
         if self._cfg is None:
             # No config — show first-run wizard
@@ -76,7 +83,14 @@ class App:
         from .audio_detect import detect_audio
 
         # Create a minimal config with detected audio for the settings window
-        sample_rate, channels, device = detect_audio()
+        try:
+            sample_rate, channels, device = detect_audio()
+        except RuntimeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            from tkinter import messagebox
+            messagebox.showerror("Phonetic", str(e))
+            self._root.quit()
+            return
         stub_cfg = Config(
             openrouter_api_key="",
             model="google/gemini-3-flash-preview",
@@ -126,7 +140,7 @@ class App:
 
         result = check_for_update(__version__)
         if result is not None:
-            _, version, url = result
+            version, url = result
             self._msg_queue.put(("update_available", version, url))
 
     def _poll_messages(self) -> None:
@@ -174,8 +188,9 @@ class App:
     def _toggle_recording(self) -> None:
         if self._cfg is None or self._rec is None:
             return
-        if self._processing:
-            return
+        with self._processing_lock:
+            if self._processing:
+                return
 
         if not self._rec.is_recording:
             print(f"Recording... Press {self._cfg.hotkey} to stop.")
@@ -208,7 +223,8 @@ class App:
             if duration > WARN_DURATION_SECS:
                 print(f"Warning: long recording ({duration:.0f}s), upload may be slow.", file=sys.stderr)
 
-            self._processing = True
+            with self._processing_lock:
+                self._processing = True
             # Run transcription in a worker thread
             thread = threading.Thread(
                 target=self._transcribe_worker,
@@ -226,7 +242,8 @@ class App:
             self._msg_queue.put(("transcription_error", str(e)))
 
     def _on_transcription_done(self, text: str) -> None:
-        self._processing = False
+        with self._processing_lock:
+            self._processing = False
         if text:
             try:
                 copy_to_clipboard(text)
@@ -242,7 +259,8 @@ class App:
             self._notify("Empty transcription", "low", replace=True)
 
     def _on_transcription_error(self, error: str) -> None:
-        self._processing = False
+        with self._processing_lock:
+            self._processing = False
         print(f"Error: {error}", file=sys.stderr)
         preview = error if len(error) <= 120 else error[:117] + "..."
         self._notify(preview, "critical", replace=True)
@@ -270,7 +288,10 @@ class App:
 
             # Update hotkey if changed
             if self._hotkeys and old_hotkey != cfg.hotkey:
-                self._hotkeys.update_hotkey(cfg.hotkey)
+                try:
+                    self._hotkeys.update_hotkey(cfg.hotkey)
+                except ValueError as e:
+                    print(f"Hotkey error: {e}", file=sys.stderr)
 
         SettingsWindow(self._root, self._cfg, on_save=on_settings_save)
 
@@ -297,7 +318,11 @@ class App:
 
     def _run_headless(self) -> None:
         """Run in headless/console mode (original behavior for systemd/CLI)."""
-        cfg = load_config(require_key=False)
+        try:
+            cfg = load_config(require_key=False)
+        except RuntimeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
         if cfg is None or not cfg.openrouter_api_key:
             print("OPENROUTER_API_KEY is required", file=sys.stderr)
             sys.exit(1)
@@ -312,7 +337,7 @@ class App:
         # Start hotkeys (includes SIGUSR1 on Linux)
         self._hotkeys = HotkeyManager(
             cfg.hotkey,
-            on_toggle=lambda: self._toggle_recording_headless(),
+            on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
         )
         self._hotkeys.start()
 
@@ -341,60 +366,3 @@ class App:
         finally:
             self._shutdown()
 
-    def _toggle_recording_headless(self) -> None:
-        """Synchronous toggle for headless mode (runs transcription inline)."""
-        if self._cfg is None or self._rec is None:
-            return
-        if self._processing:
-            return
-
-        if not self._rec.is_recording:
-            print(f"Recording... Press {self._cfg.hotkey} to stop.")
-            try:
-                self._rec.start()
-            except Exception as e:
-                print(f"Audio input error: {e}", file=sys.stderr)
-                notify(f"Audio input error: {e}", urgency="critical", enabled=self._cfg.notify)
-                return
-            notify("Recording started", urgency="low", persist=True, enabled=self._cfg.notify)
-        else:
-            print("Stopping, processing...")
-            audio = self._rec.stop()
-            notify("Transcribing...", urgency="low", persist=True, replace=True, enabled=self._cfg.notify)
-
-            if audio.size == 0:
-                print("No audio captured.")
-                notify("No audio captured", urgency="critical", replace=True, enabled=self._cfg.notify)
-                return
-
-            duration = audio.shape[0] / self._cfg.sample_rate
-            if duration < MIN_DURATION_SECS:
-                print(f"Recording too short ({duration:.1f}s), skipping.")
-                notify("Recording too short", urgency="low", replace=True, enabled=self._cfg.notify)
-                return
-            if duration > WARN_DURATION_SECS:
-                print(f"Warning: long recording ({duration:.0f}s), upload may be slow.", file=sys.stderr)
-
-            self._processing = True
-            try:
-                text = transcribe(self._cfg, audio).strip()
-                if text:
-                    try:
-                        copy_to_clipboard(text)
-                        print("Transcription copied to clipboard.")
-                        preview = text if len(text) <= 120 else text[:117] + "..."
-                        notify(f"\u201c{preview}\u201d", replace=True, enabled=self._cfg.notify)
-                    except Exception as e:
-                        print(f"Clipboard unavailable: {e}", file=sys.stderr)
-                        print("Transcription (not copied):\n" + text)
-                        notify("Transcription ready (clipboard unavailable)", replace=True, enabled=self._cfg.notify)
-                else:
-                    print("Empty transcription.")
-                    notify("Empty transcription", urgency="low", replace=True, enabled=self._cfg.notify)
-            except Exception as e:
-                print(f"Error: {e}", file=sys.stderr)
-                err_msg = str(e)
-                preview = err_msg if len(err_msg) <= 120 else err_msg[:117] + "..."
-                notify(preview, urgency="critical", replace=True, enabled=self._cfg.notify)
-            finally:
-                self._processing = False
