@@ -17,10 +17,6 @@ jobs:
             name: macos-arm64
             script: packaging/build_macos.sh
             artifact: dist/Phonetic.dmg
-          - os: macos-13
-            name: macos-x64
-            script: packaging/build_macos.sh
-            artifact: dist/Phonetic.dmg
           - os: windows-latest
             name: windows-x64
             script: packaging/build_windows.bat
