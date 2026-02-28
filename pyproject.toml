@@ -15,6 +15,7 @@ dependencies = [
     "pystray",
     "Pillow",
     "customtkinter",
+    "packaging",
     "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
     "pyobjc-framework-ApplicationServices; sys_platform == 'darwin'",
 ]
