@@ -115,7 +115,19 @@ class App:
         )
         self._hotkeys.start()
 
+        # Check for updates in the background
+        threading.Thread(target=self._check_for_update, daemon=True).start()
+
         print(f"Ready. Press {self._cfg.hotkey} to start/stop recording.")
+
+    def _check_for_update(self) -> None:
+        from . import __version__
+        from .update_check import check_for_update
+
+        result = check_for_update(__version__)
+        if result is not None:
+            _, version, url = result
+            self._msg_queue.put(("update_available", version, url))
 
     def _poll_messages(self) -> None:
         """Process all pending messages from the queue."""
@@ -147,6 +159,11 @@ class App:
         elif cmd == "transcription_error":
             error = msg[1] if len(msg) > 1 else "Unknown error"
             self._on_transcription_error(error)
+        elif cmd == "update_available":
+            version = msg[1] if len(msg) > 1 else ""
+            url = msg[2] if len(msg) > 2 else ""
+            print(f"Update available: v{version} — {url}")
+            self._notify(f"Update available: v{version}")
         elif cmd == "config_reloaded":
             cfg = msg[1] if len(msg) > 1 else None
             if cfg is not None:
@@ -298,6 +315,9 @@ class App:
             on_toggle=lambda: self._toggle_recording_headless(),
         )
         self._hotkeys.start()
+
+        # Check for updates in the background
+        threading.Thread(target=self._check_for_update, daemon=True).start()
 
         print(f"Ready. Press {cfg.hotkey} to start/stop recording.")
         if sys.platform.startswith("linux"):
