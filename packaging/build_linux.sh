@@ -32,7 +32,7 @@ Version: $VERSION
 Section: utils
 Priority: optional
 Architecture: amd64
-Depends: libportaudio2, libsndfile1
+Depends: libportaudio2, libsndfile1, wl-clipboard | xclip, libnotify-bin
 Maintainer: Startino <hello@startino.com>
 Description: Hotkey-based speech-to-text via multimodal LLM
  Press a keybind to record, press again to stop — transcription
@@ -51,6 +51,20 @@ StartupNotify=false
 EOF
 
 ln -sf /opt/phonetic/phonetic "$DEB_DIR/usr/local/bin/phonetic"
+
+# Post-install script: launch Phonetic GUI so the first-run wizard appears
+cat > "$DEB_DIR/DEBIAN/postinst" <<'EOF'
+#!/bin/sh
+# Launch Phonetic for the logged-in user so the first-run wizard appears
+if [ "$1" = "configure" ]; then
+    REAL_USER="${SUDO_USER:-$USER}"
+    if [ "$REAL_USER" != "root" ] && command -v sudo >/dev/null; then
+        sudo -u "$REAL_USER" sh -c \
+          'DISPLAY="${DISPLAY:-:0}" nohup /opt/phonetic/phonetic >/dev/null 2>&1 &'
+    fi
+fi
+EOF
+chmod 755 "$DEB_DIR/DEBIAN/postinst"
 
 dpkg-deb --build "$DEB_DIR" "$DIST/phonetic_${VERSION}_amd64.deb"
 echo "Done: $DIST/phonetic_${VERSION}_amd64.deb"

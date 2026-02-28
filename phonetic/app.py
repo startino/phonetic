@@ -132,7 +132,10 @@ class App:
         # Check for updates in the background
         threading.Thread(target=self._check_for_update, daemon=True).start()
 
-        print(f"Ready. Press {self._cfg.hotkey} to start/stop recording.")
+        if self._hotkeys.signal_only:
+            print("Ready. Waiting for SIGUSR1 to start/stop recording.")
+        else:
+            print(f"Ready. Press {self._cfg.hotkey} to start/stop recording.")
 
     def _check_for_update(self) -> None:
         from . import __version__
@@ -344,11 +347,15 @@ class App:
         # Check for updates in the background
         threading.Thread(target=self._check_for_update, daemon=True).start()
 
-        print(f"Ready. Press {cfg.hotkey} to start/stop recording.")
-        if sys.platform.startswith("linux"):
-            from .platform_utils import _is_wayland
-            session_type = "wayland" if _is_wayland() else "x11"
-            print(f"Session: {session_type}")
+        if self._hotkeys.signal_only:
+            print("Ready. Waiting for SIGUSR1 to start/stop recording.")
+            print("Tip: run 'phonetic --setup' for hotkey binding instructions.")
+        else:
+            print(f"Ready. Press {cfg.hotkey} to start/stop recording.")
+            if sys.platform.startswith("linux"):
+                from .platform_utils import _is_wayland
+                session_type = "wayland" if _is_wayland() else "x11"
+                print(f"Session: {session_type}")
 
         print("Press Ctrl+C to exit.")
         try:

@@ -77,6 +77,18 @@ class SettingsWindow(ctk.CTkToplevel):
         )
         ctk.CTkEntry(self, textvariable=self._hotkey_var).pack(fill="x", padx=16, pady=(0, 4))
 
+        # Wayland note: hotkey must be configured via DE settings
+        if sys.platform.startswith("linux"):
+            from ..platform_utils import _is_wayland
+            if _is_wayland():
+                ctk.CTkLabel(
+                    self,
+                    text="On Wayland, bind this hotkey in your DE settings. Run 'phonetic --setup' for help.",
+                    font=ctk.CTkFont(size=11),
+                    text_color="gray",
+                    anchor="w",
+                ).pack(fill="x", padx=16, pady=(0, 4))
+
         # Notifications
         self._notify_var = ctk.BooleanVar(value=self._config.notify if self._config else True)
         ctk.CTkCheckBox(self, text="Enable notifications", variable=self._notify_var).pack(
