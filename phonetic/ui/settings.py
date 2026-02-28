@@ -139,9 +139,18 @@ class SettingsWindow(ctk.CTkToplevel):
     def _on_save_click(self) -> None:
         api_key = self._api_key_var.get().strip()
         if not api_key:
-            # Show inline error
             self._api_key_entry.configure(border_color="red")
             return
+
+        # Validate hotkey
+        hotkey = self._hotkey_var.get().strip()
+        if hotkey:
+            from ..hotkeys import validate_hotkey
+            error = validate_hotkey(hotkey)
+            if error:
+                from tkinter import messagebox
+                messagebox.showerror("Invalid Hotkey", f"'{hotkey}' is not a valid hotkey.\n\n{error}", parent=self)
+                return
 
         # Build config, preserving auto-detected audio fields
         system_prompt = DEFAULT_SYSTEM_PROMPT

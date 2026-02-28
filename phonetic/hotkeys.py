@@ -9,6 +9,18 @@ from typing import Callable, Optional
 from pynput import keyboard as kb
 
 
+def validate_hotkey(hotkey: str) -> Optional[str]:
+    """Validate a pynput hotkey string.
+
+    Returns None if valid, or an error message string if invalid.
+    """
+    try:
+        kb.HotKey.parse(hotkey)
+        return None
+    except (ValueError, TypeError) as e:
+        return str(e)
+
+
 class HotkeyManager:
     """Cross-platform global hotkey listener using pynput + SIGUSR1 fallback."""
 
@@ -38,7 +50,13 @@ class HotkeyManager:
         self._cleanup_pidfile()
 
     def update_hotkey(self, new_hotkey: str) -> None:
-        """Restart the listener with a new hotkey."""
+        """Restart the listener with a new hotkey.
+
+        Raises ValueError if the hotkey string is invalid.
+        """
+        error = validate_hotkey(new_hotkey)
+        if error:
+            raise ValueError(f"Invalid hotkey '{new_hotkey}': {error}")
         if self._listener is not None:
             self._listener.stop()
         self._hotkey = new_hotkey
