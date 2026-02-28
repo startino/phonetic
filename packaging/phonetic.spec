@@ -28,6 +28,7 @@ a = Analysis(
         'phonetic.tray',
         'phonetic.notifications',
         'phonetic.autostart',
+        'phonetic.update_check',
         'phonetic.ui',
         'phonetic.ui.settings',
         'pystray._appindicator' if sys.platform.startswith('linux') else '',
