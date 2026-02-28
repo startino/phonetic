@@ -1,8 +1,8 @@
 import os
 import sys
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import ClassVar, Optional
 
 from dotenv import load_dotenv
 
@@ -22,12 +22,12 @@ class Config:
     auto_start: bool = False
 
     # Fields that are auto-detected and never saved
-    _AUTO_FIELDS = {"sample_rate", "channels", "device"}
+    _AUTO_FIELDS: ClassVar[set[str]] = {"sample_rate", "channels", "device"}
 
     # Fields to persist
-    _SAVE_FIELDS = {"openrouter_api_key", "model", "hotkey", "notify", "system_prompt", "auto_start"}
+    _SAVE_FIELDS: ClassVar[set[str]] = {"openrouter_api_key", "model", "hotkey", "notify", "system_prompt", "auto_start"}
 
-    _FIELD_ENV_MAP = {
+    _FIELD_ENV_MAP: ClassVar[dict[str, str]] = {
         "openrouter_api_key": "OPENROUTER_API_KEY",
         "model": "MODEL",
         "hotkey": "HOTKEY",
@@ -139,7 +139,11 @@ def save_config(cfg: Config) -> Path:
         value = getattr(cfg, field_name)
         if isinstance(value, bool):
             value = "1" if value else "0"
-        lines.append(f"{env_name}={value}")
+        else:
+            value = str(value)
+        # Quote values to handle spaces, #, and special characters
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        lines.append(f'{env_name}="{escaped}"')
 
     path.write_text("\n".join(sorted(lines)) + "\n", encoding="utf-8")
     return path
