@@ -7,13 +7,29 @@ block_cipher = None
 root = Path(SPECPATH).parent
 
 a = Analysis(
-    [str(root / 'phonetic' / '__main__.py')],
+    [str(root / 'main.py')],
     pathex=[str(root)],
     binaries=[],
     datas=[
         (str(root / 'assets'), 'assets'),
     ],
     hiddenimports=[
+        'phonetic',
+        'phonetic.__main__',
+        'phonetic.app',
+        'phonetic.config',
+        'phonetic.constants',
+        'phonetic.platform_utils',
+        'phonetic.clipboard',
+        'phonetic.recorder',
+        'phonetic.transcribe',
+        'phonetic.audio_detect',
+        'phonetic.hotkeys',
+        'phonetic.tray',
+        'phonetic.notifications',
+        'phonetic.autostart',
+        'phonetic.ui',
+        'phonetic.ui.settings',
         'pystray._appindicator' if sys.platform.startswith('linux') else '',
         'pystray._darwin' if sys.platform == 'darwin' else '',
         'pystray._win32' if sys.platform == 'win32' else '',
