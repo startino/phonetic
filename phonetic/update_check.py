@@ -11,8 +11,8 @@ _RELEASES_URL = "https://api.github.com/repos/startino/phonetic/releases/latest"
 _TIMEOUT = 5
 
 
-def check_for_update(current_version: str) -> Optional[tuple[bool, str, str]]:
-    """Return (True, latest_version, html_url) if a newer release exists.
+def check_for_update(current_version: str) -> Optional[tuple[str, str]]:
+    """Return (latest_version, html_url) if a newer release exists.
 
     Returns None on error or when already up-to-date.
     Never raises — all exceptions are swallowed so the app keeps running.
@@ -31,7 +31,7 @@ def check_for_update(current_version: str) -> Optional[tuple[bool, str, str]]:
         html_url = data.get("html_url", "")
 
         if parse_version(latest) > parse_version(current_version):
-            return (True, latest, html_url)
+            return (latest, html_url)
     except Exception:
         pass
 
