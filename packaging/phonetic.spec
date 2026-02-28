@@ -31,9 +31,9 @@ a = Analysis(
         'phonetic.update_check',
         'phonetic.ui',
         'phonetic.ui.settings',
-        'pystray._appindicator' if sys.platform.startswith('linux') else '',
-        'pystray._darwin' if sys.platform == 'darwin' else '',
-        'pystray._win32' if sys.platform == 'win32' else '',
+        *(['pystray._appindicator'] if sys.platform.startswith('linux') else []),
+        *(['pystray._darwin'] if sys.platform == 'darwin' else []),
+        *(['pystray._win32'] if sys.platform == 'win32' else []),
         'PIL._tkinter_finder',
     ],
     hookspath=[],
@@ -45,7 +45,7 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
     module_collection_mode={
-        'customtkinter': 'collect_all',
+        'customtkinter': 'py',
     },
 )
 
