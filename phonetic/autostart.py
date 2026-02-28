@@ -5,12 +5,12 @@ from pathlib import Path
 from .platform_utils import is_frozen
 
 
-def _get_executable() -> str:
-    """Get the path to the current executable."""
+def _get_command() -> list[str]:
+    """Get the command to launch Phonetic."""
     if is_frozen():
-        return sys.executable
-    # Running via Python/uv — not ideal for autostart but workable
-    return sys.executable
+        return [sys.executable]
+    # Running via Python/uv — need -m phonetic to launch the package
+    return [sys.executable, "-m", "phonetic"]
 
 
 # --- macOS: LaunchAgent plist ---
@@ -24,10 +24,9 @@ def _set_autostart_macos(enabled: bool) -> None:
 
     path = _launchagent_path()
     if enabled:
-        exe = _get_executable()
         plist = {
             "Label": "com.startino.phonetic",
-            "ProgramArguments": [exe, "-m", "phonetic"] if not is_frozen() else [exe],
+            "ProgramArguments": _get_command(),
             "RunAtLoad": True,
             "KeepAlive": False,
         }
@@ -55,8 +54,9 @@ def _set_autostart_windows(enabled: bool) -> None:
     key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _WIN_REG_KEY, 0, winreg.KEY_SET_VALUE)
     try:
         if enabled:
-            exe = _get_executable()
-            winreg.SetValueEx(key, _WIN_REG_NAME, 0, winreg.REG_SZ, f'"{exe}"')
+            cmd = _get_command()
+            value = " ".join(f'"{part}"' for part in cmd)
+            winreg.SetValueEx(key, _WIN_REG_NAME, 0, winreg.REG_SZ, value)
         else:
             try:
                 winreg.DeleteValue(key, _WIN_REG_NAME)
@@ -92,11 +92,7 @@ def _desktop_file_path() -> Path:
 def _set_autostart_linux(enabled: bool) -> None:
     path = _desktop_file_path()
     if enabled:
-        exe = _get_executable()
-        if is_frozen():
-            exec_line = exe
-        else:
-            exec_line = f"{exe} -m phonetic"
+        exec_line = " ".join(_get_command())
         content = f"""[Desktop Entry]
 Type=Application
 Name=Phonetic
