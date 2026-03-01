@@ -135,6 +135,15 @@ class App:
             options = {"AXTrustedCheckOptionPrompt": kCFBooleanTrue}
             trusted = AXIsProcessTrustedWithOptions(options)
             if not trusted:
+                # Temporarily become foreground app so the dialog is visible
+                from AppKit import (
+                    NSApplication,
+                    NSApplicationActivationPolicyRegular,
+                    NSApplicationActivationPolicyAccessory,
+                )
+                app = NSApplication.sharedApplication()
+                app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+
                 from tkinter import messagebox
                 messagebox.showwarning(
                     "Phonetic — Accessibility Required",
@@ -143,6 +152,9 @@ class App:
                     "2. Find Phonetic and toggle it ON\n"
                     "3. Restart Phonetic",
                 )
+
+                # Go back to accessory (tray-only) mode
+                app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         except ImportError:
             pass
 

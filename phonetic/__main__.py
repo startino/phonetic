@@ -10,6 +10,11 @@ def _check_macos_installation() -> None:
         return
     exe = sys.executable
     if "/AppTranslocation/" in exe or exe.startswith("/Volumes/"):
+        # Temporarily become a foreground app so the dialog is visible
+        # (LSUIElement hides us from the dock, making windows unfocusable)
+        from AppKit import NSApplication, NSApplicationActivationPolicyRegular
+        NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyRegular)
+
         import tkinter as tk
         from tkinter import messagebox
         root = tk.Tk()
