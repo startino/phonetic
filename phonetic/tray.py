@@ -74,6 +74,66 @@ class TrayManager:
             self._recording_icon = _add_recording_dot(self._idle_icon)
         self._thread: Optional[threading.Thread] = None
 
+        # Device selection state
+        self._selected_device: Optional[int] = None  # None = "Default"
+        self._default_device: Optional[int] = None
+        self._input_devices: list[dict] = []
+
+    def set_device(self, device: Optional[int], default_device: Optional[int]) -> None:
+        """Set the current and default device (called by App after init)."""
+        self._selected_device = device
+        self._default_device = default_device
+        self._refresh_devices()
+
+    def _refresh_devices(self) -> None:
+        """Refresh the cached list of input devices."""
+        from .audio_detect import list_input_devices
+        self._input_devices = list_input_devices()
+
+    def _build_device_submenu(self) -> "pystray.Menu":
+        """Build a radio-style submenu for audio device selection."""
+        items = [
+            pystray.MenuItem(
+                "Default (auto-detect)",
+                self._make_device_callback(None),
+                checked=self._make_device_check(None),
+                enabled=not self._recording,
+            ),
+            pystray.Menu.SEPARATOR,
+        ]
+        for dev in self._input_devices:
+            idx = dev["index"]
+            items.append(pystray.MenuItem(
+                dev["name"],
+                self._make_device_callback(idx),
+                checked=self._make_device_check(idx),
+                enabled=not self._recording,
+            ))
+        return pystray.Menu(*items)
+
+    def _make_device_callback(self, idx: Optional[int]):
+        """Factory to avoid closure-over-loop-variable bug."""
+        def callback(_icon, _item):
+            self._on_device_selected(idx)
+        return callback
+
+    def _make_device_check(self, idx: Optional[int]):
+        """Factory for the checked predicate of a device menu item."""
+        def check(_item):
+            return self._selected_device == idx
+        return check
+
+    def _on_device_selected(self, idx: Optional[int]) -> None:
+        """Handle a device selection from the submenu."""
+        if idx == self._selected_device:
+            return
+        self._selected_device = idx
+        self._msg_queue.put(("device_changed", idx))
+        if idx is not None and idx != self._default_device:
+            self.notify("Phonetic", "Switched away from the default audio device")
+        if self._icon is not None:
+            self._icon.update_menu()
+
     def _build_menu(self) -> "pystray.Menu":
         return pystray.Menu(
             pystray.MenuItem(
@@ -87,6 +147,11 @@ class TrayManager:
                 lambda _icon, _item: self._msg_queue.put("toggle_recording"),
             ),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                "Audio Device",
+                self._build_device_submenu(),
+            ),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem("Settings...", lambda _icon, _item: self._msg_queue.put("show_settings")),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", lambda _icon, _item: self._msg_queue.put("quit")),
@@ -97,6 +162,7 @@ class TrayManager:
         self._recording = recording
         if self._icon is not None:
             self._icon.icon = self._recording_icon if recording else self._idle_icon
+            self._icon.menu = self._build_menu()
             self._icon.update_menu()
 
     def notify(self, title: str, body: str) -> None:

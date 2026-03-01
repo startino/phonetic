@@ -136,6 +136,7 @@ class App:
 
         # Start tray
         self._tray = TrayManager(self._msg_queue)
+        self._tray.set_device(self._cfg.device, self._cfg.device)
         self._tray.run()
 
         # Start hotkeys
@@ -194,6 +195,9 @@ class App:
             url = msg[2] if len(msg) > 2 else ""
             print(f"Update available: v{version} — {url}")
             self._notify(f"Update available: v{version}")
+        elif cmd == "device_changed":
+            idx = msg[1] if len(msg) > 1 else None
+            self._on_device_changed(idx)
         elif cmd == "config_reloaded":
             cfg = msg[1] if len(msg) > 1 else None
             if cfg is not None:
@@ -291,6 +295,25 @@ class App:
         print(f"Error: {error}", file=sys.stderr)
         preview = error if len(error) <= 120 else error[:117] + "..."
         self._notify(preview, "critical", replace=True)
+
+    def _on_device_changed(self, idx: Optional[int]) -> None:
+        """Handle a device change from the tray submenu (session-only)."""
+        if self._rec is None or self._cfg is None:
+            return
+        self._rec.device = idx
+        self._cfg.device = idx
+        # Re-detect sample rate for the new device
+        try:
+            if idx is None:
+                from .audio_detect import detect_audio
+                sample_rate, _channels, _dev = detect_audio()
+            else:
+                import sounddevice as sd
+                sample_rate = int(sd.query_devices(idx)["default_samplerate"])
+            self._rec.sample_rate = sample_rate
+            self._cfg.sample_rate = sample_rate
+        except Exception as e:
+            print(f"Warning: could not detect sample rate for device {idx}: {e}")
 
     def _notify(self, body: str, urgency: str = "normal", persist: bool = False, replace: bool = False) -> None:
         enabled = self._cfg.notify if self._cfg else True

@@ -20,6 +20,19 @@ def _pipewire_default_source() -> Optional[str]:
     return None
 
 
+def list_input_devices() -> list[dict]:
+    """Return all available audio input devices.
+
+    Returns a list of ``{"index": int, "name": str}`` dicts for every device
+    whose ``max_input_channels > 0``.
+    """
+    devices = []
+    for idx, dev in enumerate(sd.query_devices()):
+        if dev["max_input_channels"] > 0:
+            devices.append({"index": idx, "name": dev["name"]})
+    return devices
+
+
 def detect_audio() -> tuple[int, int, Optional[int]]:
     """Return (sample_rate, channels, device_index) from the default input device.
 
