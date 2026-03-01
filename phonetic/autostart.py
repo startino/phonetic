@@ -10,7 +10,8 @@ def _get_command() -> list[str]:
     if is_frozen():
         exe = sys.executable
         if sys.platform == "darwin" and "AppTranslocation" in exe:
-            # macOS runs quarantined apps from a temp path — resolve to actual install location
+            # macOS runs quarantined apps from a temp path — resolve to actual location.
+            # Prefer ~/Applications (Sequoia blocks ad-hoc signed apps in /Applications).
             home_app = os.path.expanduser("~/Applications/Phonetic.app/Contents/MacOS/phonetic")
             system_app = "/Applications/Phonetic.app/Contents/MacOS/phonetic"
             exe = home_app if os.path.exists(home_app) else system_app

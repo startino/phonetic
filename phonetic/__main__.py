@@ -1,32 +1,64 @@
 import argparse
+import os
 import sys
 
 from .platform_utils import has_display, is_frozen
 
 
 def _check_macos_installation() -> None:
-    """On macOS, abort early if launched from a DMG or translocated path."""
+    """On macOS, auto-install to ~/Applications if launched from a DMG or translocated path."""
     if sys.platform != "darwin" or not is_frozen():
         return
     exe = sys.executable
-    if "/AppTranslocation/" in exe or exe.startswith("/Volumes/"):
-        # Temporarily become a foreground app so the dialog is visible
-        # (LSUIElement hides us from the dock, making windows unfocusable)
-        from AppKit import NSApplication, NSApplicationActivationPolicyRegular
-        NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyRegular)
+    if "/AppTranslocation/" not in exe and not exe.startswith("/Volumes/"):
+        return
 
-        import tkinter as tk
-        from tkinter import messagebox
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror(
-            "Phonetic — Installation Required",
-            "Phonetic is running from a disk image.\n\n"
-            "Please drag Phonetic to your Applications folder first, "
-            "then launch it from there.",
-        )
+    import shutil
+    import subprocess
+
+    # Temporarily become a foreground app so the dialog is visible
+    # (LSUIElement hides us from the dock, making windows unfocusable)
+    from AppKit import NSApplication, NSApplicationActivationPolicyRegular
+    NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyRegular)
+
+    import tkinter as tk
+    from tkinter import messagebox
+    root = tk.Tk()
+    root.withdraw()
+
+    # Walk up from the executable to find the .app bundle
+    app_bundle = exe
+    while app_bundle and not app_bundle.endswith(".app"):
+        app_bundle = os.path.dirname(app_bundle)
+
+    if not app_bundle:
+        messagebox.showerror("Phonetic", "Could not determine app bundle path.")
+        root.destroy()
+        sys.exit(1)
+
+    dest_dir = os.path.expanduser("~/Applications")
+    dest_app = os.path.join(dest_dir, "Phonetic.app")
+
+    result = messagebox.askyesno(
+        "Install Phonetic",
+        "Phonetic needs to be installed before it can run.\n\n"
+        f"Install to {dest_dir}?",
+    )
+
+    if not result:
         root.destroy()
         sys.exit(0)
+
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        if os.path.exists(dest_app):
+            shutil.rmtree(dest_app)
+        shutil.copytree(app_bundle, dest_app)
+        subprocess.Popen(["open", dest_app])
+    except Exception as e:
+        messagebox.showerror("Phonetic", f"Installation failed:\n{e}")
+    root.destroy()
+    sys.exit(0)
 
 
 def _log(msg: str) -> None:

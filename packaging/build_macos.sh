@@ -52,28 +52,20 @@ codesign --verify --deep --strict "$APP" 2>&1 && echo "Signature verification: O
     || echo "WARNING: Signature verification reported issues (may be expected for ad-hoc)"
 
 # --- Create DMG ---
+# No /Applications symlink — the app self-installs to ~/Applications on first
+# launch because macOS Sequoia blocks ad-hoc signed apps in /Applications.
 echo "Creating DMG..."
 DMG="$DIST/Phonetic.dmg"
-
-# Stage a folder with the app + Applications symlink for drag-to-install
-STAGE="$DIST/dmg_stage"
-rm -rf "$STAGE"
-mkdir -p "$STAGE"
-cp -R "$APP" "$STAGE/"
-ln -s /Applications "$STAGE/Applications"
 
 if command -v create-dmg &>/dev/null; then
     create-dmg \
         --volname "Phonetic" \
         --window-pos 200 120 \
-        --window-size 600 400 \
+        --window-size 400 300 \
         --icon-size 100 \
-        --icon "Phonetic.app" 175 120 \
-        --icon "Applications" 425 120 \
-        "$DMG" "$STAGE"
+        --icon "Phonetic.app" 200 120 \
+        "$DMG" "$APP"
 else
-    hdiutil create -volname "Phonetic" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+    hdiutil create -volname "Phonetic" -srcfolder "$APP" -ov -format UDZO "$DMG"
 fi
-
-rm -rf "$STAGE"
 echo "Done: $DMG"
