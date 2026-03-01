@@ -1,3 +1,4 @@
+import os
 import sys
 import tkinter as tk
 from typing import Optional, Callable
@@ -29,11 +30,25 @@ class SettingsWindow(ctk.CTkToplevel):
         self.resizable(False, True)
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
+        # Set window icon
+        self._set_window_icon()
+
         # Bring to front
         self.lift()
         self.focus_force()
 
         self._build_ui()
+
+    def _set_window_icon(self) -> None:
+        """Set the window icon from assets."""
+        try:
+            from ..tray import _assets_dir
+            icon_path = os.path.join(_assets_dir(), "icon.png")
+            if os.path.exists(icon_path):
+                self._icon_photo = tk.PhotoImage(file=icon_path)
+                self.iconphoto(False, self._icon_photo)
+        except Exception:
+            pass
 
     def _build_ui(self) -> None:
         pad = {"padx": 16, "pady": (4, 4)}

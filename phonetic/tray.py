@@ -1,3 +1,4 @@
+import os
 import queue
 import sys
 import threading
@@ -11,44 +12,49 @@ except ImportError:
     pystray = None
 
 
-def _make_icon(color: str = "#cccccc", size: int = 64) -> Image.Image:
-    """Generate a simple microphone icon programmatically."""
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+def _assets_dir() -> str:
+    """Resolve path to the assets directory (works in dev and PyInstaller)."""
+    if getattr(sys, "frozen", False):
+        # PyInstaller bundles assets alongside the executable
+        return os.path.join(sys._MEIPASS, "assets")
+    # Dev mode: assets/ is at the repo root, one level up from phonetic/
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
+
+
+def _load_icon(name: str, size: int = 64) -> Image.Image:
+    """Load an icon from assets, or generate a fallback colored square."""
+    path = os.path.join(_assets_dir(), name)
+    try:
+        img = Image.open(path).convert("RGBA")
+        return img.resize((size, size), Image.LANCZOS)
+    except (FileNotFoundError, OSError):
+        # Fallback: colored square to prevent crash
+        img = Image.new("RGBA", (size, size), "#444444")
+        draw = ImageDraw.Draw(img)
+        draw.ellipse([size // 4, size // 4, 3 * size // 4, 3 * size // 4], fill="#cccccc")
+        return img
+
+
+def _add_recording_dot(icon: Image.Image) -> Image.Image:
+    """Overlay a red recording dot on the bottom-right of the icon."""
+    img = icon.copy()
+    size = img.width
     draw = ImageDraw.Draw(img)
 
-    # Microphone body (rounded rectangle approximated by ellipse + rect)
-    mic_w = size // 3
-    mic_h = size // 2
-    mic_x = (size - mic_w) // 2
-    mic_y = size // 8
+    dot_r = size // 6
+    margin = size // 16
+    cx = size - margin - dot_r
+    cy = size - margin - dot_r
 
-    # Mic head (ellipse top)
+    outline = dot_r // 6 or 1
     draw.ellipse(
-        [mic_x, mic_y, mic_x + mic_w, mic_y + mic_w],
-        fill=color,
+        [cx - dot_r - outline, cy - dot_r - outline, cx + dot_r + outline, cy + dot_r + outline],
+        fill="white",
     )
-    # Mic body (rectangle)
-    draw.rectangle(
-        [mic_x, mic_y + mic_w // 2, mic_x + mic_w, mic_y + mic_h],
-        fill=color,
-    )
-    # Mic bottom (ellipse)
     draw.ellipse(
-        [mic_x, mic_y + mic_h - mic_w // 2, mic_x + mic_w, mic_y + mic_h + mic_w // 2],
-        fill=color,
+        [cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r],
+        fill="#ff2222",
     )
-    # Stand
-    stand_x = size // 2
-    stand_top = mic_y + mic_h + mic_w // 4
-    stand_bot = stand_top + size // 6
-    draw.line([(stand_x, stand_top), (stand_x, stand_bot)], fill=color, width=max(2, size // 16))
-    # Base
-    base_w = size // 3
-    draw.line(
-        [(stand_x - base_w // 2, stand_bot), (stand_x + base_w // 2, stand_bot)],
-        fill=color, width=max(2, size // 16),
-    )
-
     return img
 
 
@@ -59,8 +65,13 @@ class TrayManager:
         self._msg_queue = msg_queue
         self._icon: Optional["pystray.Icon"] = None
         self._recording = False
-        self._idle_icon = _make_icon("#cccccc")
-        self._recording_icon = _make_icon("#ff4444")
+        self._idle_icon = _load_icon("icon.png")
+        # Try pre-generated recording icon, fall back to runtime overlay
+        rec_path = os.path.join(_assets_dir(), "icon_recording.png")
+        if os.path.exists(rec_path):
+            self._recording_icon = _load_icon("icon_recording.png")
+        else:
+            self._recording_icon = _add_recording_dot(self._idle_icon)
         self._thread: Optional[threading.Thread] = None
 
     def _build_menu(self) -> "pystray.Menu":

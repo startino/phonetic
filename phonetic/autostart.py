@@ -97,6 +97,7 @@ def _set_autostart_linux(enabled: bool) -> None:
 Type=Application
 Name=Phonetic
 Exec={exec_line}
+Icon=phonetic
 Hidden=false
 X-GNOME-Autostart-enabled=true
 """

@@ -1,6 +1,8 @@
+import os
 import queue
 import sys
 import threading
+import tkinter as tk
 from typing import Optional
 
 import numpy as np
@@ -40,6 +42,17 @@ class App:
         else:
             self._run_gui()
 
+    def _set_root_icon(self) -> None:
+        """Set the root window icon so child windows inherit it."""
+        try:
+            from .tray import _assets_dir
+            icon_path = os.path.join(_assets_dir(), "icon.png")
+            if os.path.exists(icon_path):
+                self._icon_photo = tk.PhotoImage(file=icon_path)
+                self._root.iconphoto(True, self._icon_photo)
+        except Exception:
+            pass
+
     # --- GUI mode ---
 
     def _run_gui(self) -> None:
@@ -50,6 +63,9 @@ class App:
 
         self._root = ctk.CTk()
         self._root.withdraw()  # Hidden — tray-only presence
+
+        # Set window icon so all child windows inherit it
+        self._set_root_icon()
 
         # Hide from macOS dock
         if sys.platform == "darwin":

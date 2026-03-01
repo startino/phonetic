@@ -1,59 +1,102 @@
-"""Generate tray icon assets programmatically."""
+"""Generate platform icon assets from the source icon.png."""
+
+import os
+import subprocess
+import sys
+import tempfile
+
 from PIL import Image, ImageDraw
 
 
-def make_mic_icon(color: str, bg: str = "transparent", size: int = 64) -> Image.Image:
-    """Generate a microphone icon."""
-    if bg == "transparent":
-        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    else:
-        img = Image.new("RGBA", (size, size), bg)
+def _add_recording_dot(icon: Image.Image) -> Image.Image:
+    """Overlay a red recording dot on the bottom-right of the icon."""
+    img = icon.copy()
+    size = img.width
     draw = ImageDraw.Draw(img)
 
-    # Microphone body
-    mic_w = size // 3
-    mic_h = size // 2
-    mic_x = (size - mic_w) // 2
-    mic_y = size // 8
+    dot_r = size // 6
+    margin = size // 16
+    cx = size - margin - dot_r
+    cy = size - margin - dot_r
 
-    # Mic head (ellipse top)
-    draw.ellipse([mic_x, mic_y, mic_x + mic_w, mic_y + mic_w], fill=color)
-    # Mic body (rectangle)
-    draw.rectangle([mic_x, mic_y + mic_w // 2, mic_x + mic_w, mic_y + mic_h], fill=color)
-    # Mic bottom (ellipse)
+    # White outline for visibility
+    outline = dot_r // 6 or 1
     draw.ellipse(
-        [mic_x, mic_y + mic_h - mic_w // 2, mic_x + mic_w, mic_y + mic_h + mic_w // 2],
-        fill=color,
+        [cx - dot_r - outline, cy - dot_r - outline, cx + dot_r + outline, cy + dot_r + outline],
+        fill="white",
     )
-    # Stand
-    stand_x = size // 2
-    stand_top = mic_y + mic_h + mic_w // 4
-    stand_bot = stand_top + size // 6
-    draw.line([(stand_x, stand_top), (stand_x, stand_bot)], fill=color, width=max(2, size // 16))
-    # Base
-    base_w = size // 3
-    draw.line(
-        [(stand_x - base_w // 2, stand_bot), (stand_x + base_w // 2, stand_bot)],
-        fill=color, width=max(2, size // 16),
+    draw.ellipse(
+        [cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r],
+        fill="#ff2222",
     )
-
     return img
 
 
+def generate_recording_icon(source: Image.Image, out_path: str) -> None:
+    """Generate the recording variant with a red dot overlay."""
+    recording = _add_recording_dot(source)
+    recording.save(out_path)
+    print(f"  -> {os.path.basename(out_path)}")
+
+
+def generate_ico(source: Image.Image, out_path: str) -> None:
+    """Generate a Windows .ico with multiple sizes."""
+    sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+    source.save(out_path, format="ICO", sizes=sizes)
+    print(f"  -> {os.path.basename(out_path)}")
+
+
+def generate_icns(source: Image.Image, out_path: str) -> None:
+    """Generate a macOS .icns via iconutil (macOS only, skips elsewhere)."""
+    if sys.platform != "darwin":
+        print("  -> icon.icns skipped (not macOS)")
+        return
+
+    iconset_sizes = {
+        "icon_16x16.png": 16,
+        "icon_16x16@2x.png": 32,
+        "icon_32x32.png": 32,
+        "icon_32x32@2x.png": 64,
+        "icon_128x128.png": 128,
+        "icon_128x128@2x.png": 256,
+        "icon_256x256.png": 256,
+        "icon_256x256@2x.png": 512,
+        "icon_512x512.png": 512,
+        "icon_512x512@2x.png": 1024,
+    }
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        iconset_dir = os.path.join(tmpdir, "icon.iconset")
+        os.makedirs(iconset_dir)
+
+        for name, size in iconset_sizes.items():
+            resized = source.resize((size, size), Image.LANCZOS)
+            resized.save(os.path.join(iconset_dir, name))
+
+        try:
+            subprocess.run(
+                ["iconutil", "-c", "icns", iconset_dir, "-o", out_path],
+                check=True,
+                capture_output=True,
+            )
+            print(f"  -> {os.path.basename(out_path)}")
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print(f"  -> icon.icns failed: {e}")
+
+
 if __name__ == "__main__":
-    import os
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    source_path = os.path.join(script_dir, "icon.png")
 
-    # Idle icon (gray/white)
-    idle = make_mic_icon("#cccccc", size=64)
-    idle.save(os.path.join(script_dir, "icon.png"))
+    if not os.path.exists(source_path):
+        print(f"Error: {source_path} not found", file=sys.stderr)
+        sys.exit(1)
 
-    # Recording icon (red)
-    recording = make_mic_icon("#ff4444", size=64)
-    recording.save(os.path.join(script_dir, "icon_recording.png"))
+    source = Image.open(source_path).convert("RGBA")
+    print(f"Source: {source.width}x{source.height} icon.png")
 
-    # Windows .ico (multi-size)
-    ico_sizes = [make_mic_icon("#cccccc", size=s) for s in [16, 32, 48, 64, 128, 256]]
-    ico_sizes[0].save(os.path.join(script_dir, "icon.ico"), sizes=[(s.width, s.height) for s in ico_sizes])
+    generate_recording_icon(source, os.path.join(script_dir, "icon_recording.png"))
+    generate_ico(source, os.path.join(script_dir, "icon.ico"))
+    generate_icns(source, os.path.join(script_dir, "icon.icns"))
 
-    print("Icons generated in", script_dir)
+    print("Done.")
