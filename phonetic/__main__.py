@@ -29,8 +29,20 @@ def _check_macos_installation() -> None:
         sys.exit(0)
 
 
+def _log(msg: str) -> None:
+    """Append a diagnostic line to /tmp/phonetic_startup.log."""
+    import time
+    try:
+        with open("/tmp/phonetic_startup.log", "a") as f:
+            f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
+
+
 def main() -> None:
+    _log("main() entered")
     _check_macos_installation()
+    _log("installation check passed")
 
     parser = argparse.ArgumentParser(
         prog="phonetic",
@@ -49,11 +61,15 @@ def main() -> None:
     args = parser.parse_args()
 
     headless = args.headless or not has_display()
+    _log(f"headless={headless}")
     if headless:
         print("Running in headless mode (no display detected or --headless flag)")
 
+    _log("importing App")
     from .app import App
+    _log("creating App")
     app = App(headless=headless)
+    _log("calling app.run()")
     app.run()
 
 

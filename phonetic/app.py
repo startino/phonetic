@@ -56,22 +56,23 @@ class App:
     # --- GUI mode ---
 
     def _run_gui(self) -> None:
+        from .__main__ import _log
+        _log("_run_gui: importing customtkinter")
         import customtkinter as ctk
 
+        _log("_run_gui: setting appearance")
         ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("blue")
 
+        _log("_run_gui: creating CTk root")
         self._root = ctk.CTk()
         self._root.withdraw()  # Hidden — tray-only presence
 
         # Set window icon so all child windows inherit it
         self._set_root_icon()
 
-        # Hide from macOS dock
-        if sys.platform == "darwin":
-            self._hide_macos_dock()
-
         # Load config (or trigger first-run)
+        _log("_run_gui: loading config")
         try:
             self._cfg = load_config(require_key=True)
         except RuntimeError as e:
@@ -81,13 +82,21 @@ class App:
             self._root.quit()
             return
 
+        _log(f"_run_gui: config loaded, cfg is None = {self._cfg is None}")
         if self._cfg is None:
-            # No config — show first-run wizard
+            # First run — keep dock icon visible so the wizard window is focusable
+            _log("_run_gui: showing first-run wizard")
             self._show_first_run_wizard()
         else:
+            # Returning user — hide from dock, tray-only presence
+            if sys.platform == "darwin":
+                _log("_run_gui: hiding from dock")
+                self._hide_macos_dock()
+            _log("_run_gui: starting services")
             self._start_services()
 
         # Start message queue polling
+        _log("_run_gui: entering mainloop")
         self._root.after(100, self._poll_messages)
         self._root.mainloop()
 
@@ -95,12 +104,15 @@ class App:
         self._shutdown()
 
     def _show_first_run_wizard(self) -> None:
+        from .__main__ import _log
         from .ui.settings import SettingsWindow
         from .audio_detect import detect_audio
 
         # Create a minimal config with detected audio for the settings window
+        _log("first_run_wizard: detecting audio")
         try:
             sample_rate, channels, device = detect_audio()
+            _log(f"first_run_wizard: audio detected sr={sample_rate} ch={channels} dev={device}")
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             from tkinter import messagebox
@@ -120,9 +132,14 @@ class App:
 
         def on_first_run_save(cfg: Config) -> None:
             self._cfg = cfg
+            # Now hide from dock — wizard is done, switch to tray-only
+            if sys.platform == "darwin":
+                self._hide_macos_dock()
             self._start_services()
 
+        _log("first_run_wizard: opening SettingsWindow")
         SettingsWindow(self._root, stub_cfg, first_run=True, on_save=on_first_run_save)
+        _log("first_run_wizard: SettingsWindow created")
 
     def _check_accessibility(self) -> None:
         """On macOS, prompt for Accessibility permission (needed for global hotkeys)."""
