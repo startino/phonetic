@@ -10,8 +10,10 @@ def _get_command() -> list[str]:
     if is_frozen():
         exe = sys.executable
         if sys.platform == "darwin" and "AppTranslocation" in exe:
-            # macOS runs quarantined apps from a temp path — resolve to /Applications
-            exe = "/Applications/Phonetic.app/Contents/MacOS/phonetic"
+            # macOS runs quarantined apps from a temp path — resolve to actual install location
+            home_app = os.path.expanduser("~/Applications/Phonetic.app/Contents/MacOS/phonetic")
+            system_app = "/Applications/Phonetic.app/Contents/MacOS/phonetic"
+            exe = home_app if os.path.exists(home_app) else system_app
         return [exe]
     # Running via Python/uv — need -m phonetic to launch the package
     return [sys.executable, "-m", "phonetic"]

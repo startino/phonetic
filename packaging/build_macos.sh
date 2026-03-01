@@ -15,8 +15,53 @@ if [ ! -d "$APP" ]; then
     exit 1
 fi
 
+# --- Ad-hoc code signing (inside-out) ---
+# macOS Sequoia applies com.apple.provenance to apps in /Applications,
+# which triggers dyld library validation. Signing every Mach-O binary
+# with the same ad-hoc identity makes them compatible, and the
+# disable-library-validation entitlement provides a fallback.
+echo "Signing app bundle (inside-out)..."
+ENTITLEMENTS="$SCRIPT_DIR/entitlements.plist"
+SIGNED=0
+
+# 1. Sign all Mach-O binaries inside Frameworks (libraries, extensions)
+while IFS= read -r -d '' f; do
+    if file "$f" | grep -q "Mach-O"; then
+        codesign --force --sign - "$f" 2>/dev/null && SIGNED=$((SIGNED + 1)) || true
+    fi
+done < <(find "$APP/Contents/Frameworks" -type f -print0 2>/dev/null)
+
+# 2. Sign any Mach-O binaries in Resources
+while IFS= read -r -d '' f; do
+    if file "$f" | grep -q "Mach-O"; then
+        codesign --force --sign - "$f" 2>/dev/null && SIGNED=$((SIGNED + 1)) || true
+    fi
+done < <(find "$APP/Contents/Resources" -type f -print0 2>/dev/null)
+
+# 3. Sign the main executable with entitlements
+codesign --force --options runtime --sign - --entitlements "$ENTITLEMENTS" \
+    "$APP/Contents/MacOS/phonetic"
+SIGNED=$((SIGNED + 1))
+
+# 4. Sign the app bundle
+codesign --force --options runtime --sign - --entitlements "$ENTITLEMENTS" "$APP"
+SIGNED=$((SIGNED + 1))
+
+echo "Signed $SIGNED binaries."
+codesign --verify --deep --strict "$APP" 2>&1 && echo "Signature verification: OK" \
+    || echo "WARNING: Signature verification reported issues (may be expected for ad-hoc)"
+
+# --- Create DMG ---
 echo "Creating DMG..."
 DMG="$DIST/Phonetic.dmg"
+
+# Stage a folder with the app + Applications symlink for drag-to-install
+STAGE="$DIST/dmg_stage"
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+cp -R "$APP" "$STAGE/"
+ln -s /Applications "$STAGE/Applications"
+
 if command -v create-dmg &>/dev/null; then
     create-dmg \
         --volname "Phonetic" \
@@ -24,10 +69,11 @@ if command -v create-dmg &>/dev/null; then
         --window-size 600 400 \
         --icon-size 100 \
         --icon "Phonetic.app" 175 120 \
-        --app-drop-link 425 120 \
-        "$DMG" "$APP"
+        --icon "Applications" 425 120 \
+        "$DMG" "$STAGE"
 else
-    hdiutil create -volname "Phonetic" -srcfolder "$APP" -ov -format UDZO "$DMG"
+    hdiutil create -volname "Phonetic" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 fi
 
+rm -rf "$STAGE"
 echo "Done: $DMG"
