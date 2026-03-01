@@ -260,8 +260,8 @@ wheels = [
 
 [[package]]
 name = "phonetic"
-version = "0.5.6"
-source = { virtual = "." }
+version = "0.5.10"
+source = { editable = "." }
 dependencies = [
     { name = "customtkinter" },
     { name = "httpx" },
