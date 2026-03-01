@@ -1,6 +1,6 @@
 # Phonetic Project
 
-## Architecture (v0.2.0)
+## Architecture
 - **Package structure**: `phonetic/` package with modules split from old monolithic `main.py`
 - **Entry point**: `phonetic.__main__:main` (defined in `pyproject.toml [project.scripts]`)
 - **Backward compat**: `main.py` is a shim that imports from `phonetic.__main__`
