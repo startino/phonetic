@@ -99,4 +99,11 @@ if __name__ == "__main__":
     generate_ico(source, os.path.join(script_dir, "icon.ico"))
     generate_icns(source, os.path.join(script_dir, "icon.icns"))
 
+    # Tray icon variants (transparent background)
+    tray_path = os.path.join(script_dir, "icon_tray.png")
+    if os.path.exists(tray_path):
+        tray_source = Image.open(tray_path).convert("RGBA")
+        print(f"Source: {tray_source.width}x{tray_source.height} icon_tray.png")
+        generate_recording_icon(tray_source, os.path.join(script_dir, "icon_tray_recording.png"))
+
     print("Done.")

@@ -65,11 +65,11 @@ class TrayManager:
         self._msg_queue = msg_queue
         self._icon: Optional["pystray.Icon"] = None
         self._recording = False
-        self._idle_icon = _load_icon("icon.png")
+        self._idle_icon = _load_icon("icon_tray.png")
         # Try pre-generated recording icon, fall back to runtime overlay
-        rec_path = os.path.join(_assets_dir(), "icon_recording.png")
+        rec_path = os.path.join(_assets_dir(), "icon_tray_recording.png")
         if os.path.exists(rec_path):
-            self._recording_icon = _load_icon("icon_recording.png")
+            self._recording_icon = _load_icon("icon_tray_recording.png")
         else:
             self._recording_icon = _add_recording_dot(self._idle_icon)
         self._thread: Optional[threading.Thread] = None

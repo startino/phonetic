@@ -101,7 +101,8 @@ wheels/
 # PyInstaller
 *.spec.bak
 
-# Generated icon assets (icon.png is the committed source)
+# Generated icon assets (icon.png and icon_tray.png are the committed sources)
 assets/icon.ico
 assets/icon.icns
 assets/icon_recording.png
+assets/icon_tray_recording.png
