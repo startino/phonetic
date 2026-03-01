@@ -28,6 +28,9 @@
 - `customtkinter` (settings UI)
 - `pyobjc-framework-Cocoa` + `pyobjc-framework-ApplicationServices` (macOS only)
 
+## Code Principles
+- **Single source of truth**: Never rely on a downstream layer to "fix" a wrong default. If a value should be X, set it to X at the source. Redundant overrides in UI or glue code are fragile and misleading — if the override is removed, the wrong behavior silently returns. No "it works because something else corrects it" — make the data correct where it's created.
+
 ## Workflow Preferences
 - **Auto commit & push**: Always commit and push after completing work
 - **Conventional commits**: Use `feat:`, `fix:`, `chore:`, `docs:` prefixes
