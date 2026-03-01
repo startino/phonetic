@@ -215,7 +215,17 @@ class App:
                 self._notify("No audio captured", "critical", replace=True)
                 return
 
-            duration = audio.shape[0] / self._cfg.sample_rate
+            # Warn if audio is silent (common with wrong device or missing permissions)
+            peak = float(np.max(np.abs(audio)))
+            if peak < 0.001:
+                if sys.platform == "darwin":
+                    print("Warning: Audio appears silent. Check microphone permissions in "
+                          "System Settings > Privacy & Security > Microphone.", file=sys.stderr)
+                else:
+                    print("Warning: Audio appears silent. Check that your microphone is "
+                          "not muted and is set as the default input device.", file=sys.stderr)
+
+            duration = audio.shape[0] / self._rec.sample_rate
             if duration < MIN_DURATION_SECS:
                 print(f"Recording too short ({duration:.1f}s), skipping.")
                 self._notify("Recording too short", "low", replace=True)
@@ -226,17 +236,18 @@ class App:
             with self._processing_lock:
                 self._processing = True
             # Run transcription in a worker thread
+            sample_rate = self._rec.sample_rate
             thread = threading.Thread(
                 target=self._transcribe_worker,
-                args=(audio,),
+                args=(audio, sample_rate),
                 daemon=True,
             )
             thread.start()
 
-    def _transcribe_worker(self, audio: np.ndarray) -> None:
+    def _transcribe_worker(self, audio: np.ndarray, sample_rate: int) -> None:
         """Run transcription in a background thread and post result back."""
         try:
-            text = transcribe(self._cfg, audio).strip()
+            text = transcribe(self._cfg, audio, sample_rate).strip()
             self._msg_queue.put(("transcription_done", text))
         except Exception as e:
             self._msg_queue.put(("transcription_error", str(e)))

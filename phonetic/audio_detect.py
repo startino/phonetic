@@ -1,4 +1,5 @@
 import subprocess
+import sys
 from typing import Optional
 
 import sounddevice as sd
@@ -22,28 +23,27 @@ def _pipewire_default_source() -> Optional[str]:
 def detect_audio() -> tuple[int, int, Optional[int]]:
     """Return (sample_rate, channels, device_index) from the default input device.
 
-    Queries PipeWire for the actual default source, then finds the matching
-    JACK device in sounddevice. Falls back to JACK default, then ALSA default.
+    On Linux, prefers PulseAudio (routes through PipeWire reliably via
+    pipewire-pulse). Falls back to the system default on all platforms.
     """
     try:
-        pw_name = _pipewire_default_source()
-
-        for api in sd.query_hostapis():
-            if "JACK" not in api["name"]:
-                continue
-            # Try to match PipeWire's default source by name
+        # On Linux, prefer PulseAudio — it routes through PipeWire reliably
+        if sys.platform.startswith("linux"):
+            pw_name = _pipewire_default_source()
             if pw_name:
-                for idx in api["devices"]:
-                    dev = sd.query_devices(idx)
-                    if dev["max_input_channels"] > 0 and pw_name in dev["name"]:
-                        print(f"Audio device: {dev['name']} (PipeWire default)")
-                        return int(dev["default_samplerate"]), 1, idx
-            # Fall back to JACK's own default
-            if api["default_input_device"] >= 0:
-                dev = sd.query_devices(api["default_input_device"])
-                print(f"Audio device: {dev['name']} (JACK default)")
-                return int(dev["default_samplerate"]), 1, api["default_input_device"]
+                print(f"PipeWire default source: {pw_name}")
 
+            for api in sd.query_hostapis():
+                if "pulse" not in api["name"].lower():
+                    continue
+                idx = api["default_input_device"]
+                if idx >= 0:
+                    dev = sd.query_devices(idx)
+                    print(f"Audio device: {dev['name']} (PulseAudio)")
+                    return int(dev["default_samplerate"]), 1, idx
+
+        # Fallback: system default (CoreAudio on macOS, WASAPI on Windows,
+        # ALSA on Linux when PulseAudio is unavailable)
         dev = sd.query_devices(kind="input")
         print(f"Audio device: {dev['name']}")
         return int(dev["default_samplerate"]), 1, None

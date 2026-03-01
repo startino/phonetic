@@ -28,11 +28,12 @@ class Recorder:
         self._q = queue.Queue()
         self._stream = sd.InputStream(
             device=self.device,
-            samplerate=self.sample_rate,
             channels=self.channels,
             dtype="float32",
             callback=self._callback,
         )
+        # Use the stream's actual sample rate (auto-detected from device)
+        self.sample_rate = int(self._stream.samplerate)
         self._stream.start()
         self.is_recording = True
 

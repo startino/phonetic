@@ -18,12 +18,14 @@ def audio_to_base64(audio: np.ndarray, sample_rate: int) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def transcribe(cfg: Config, audio: np.ndarray) -> str:
+def transcribe(cfg: Config, audio: np.ndarray, sample_rate: int | None = None) -> str:
     """Send audio to OpenRouter for transcription+formatting via multimodal LLM."""
-    duration = audio.shape[0] / cfg.sample_rate
+    if sample_rate is None:
+        sample_rate = cfg.sample_rate
+    duration = audio.shape[0] / sample_rate
     peak = float(np.max(np.abs(audio)))
-    print(f"Audio: {duration:.1f}s, peak={peak:.4f}, rate={cfg.sample_rate}Hz")
-    audio_b64 = audio_to_base64(audio, cfg.sample_rate)
+    print(f"Audio: {duration:.1f}s, peak={peak:.4f}, rate={sample_rate}Hz")
+    audio_b64 = audio_to_base64(audio, sample_rate)
     print(f"Base64 payload: {len(audio_b64)} chars")
 
     payload = {
