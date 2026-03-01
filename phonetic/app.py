@@ -124,9 +124,34 @@ class App:
 
         SettingsWindow(self._root, stub_cfg, first_run=True, on_save=on_first_run_save)
 
+    def _check_accessibility(self) -> None:
+        """On macOS, prompt for Accessibility permission (needed for global hotkeys)."""
+        if sys.platform != "darwin":
+            return
+        try:
+            from ApplicationServices import AXIsProcessTrustedWithOptions
+            from CoreFoundation import kCFBooleanTrue
+
+            options = {"AXTrustedCheckOptionPrompt": kCFBooleanTrue}
+            trusted = AXIsProcessTrustedWithOptions(options)
+            if not trusted:
+                from tkinter import messagebox
+                messagebox.showwarning(
+                    "Phonetic — Accessibility Required",
+                    "Phonetic needs Accessibility permission for the global hotkey.\n\n"
+                    "1. Open System Settings \u2192 Privacy & Security \u2192 Accessibility\n"
+                    "2. Find Phonetic and toggle it ON\n"
+                    "3. Restart Phonetic",
+                )
+        except ImportError:
+            pass
+
     def _start_services(self) -> None:
         """Start recorder, tray, and hotkeys after config is available."""
         assert self._cfg is not None
+
+        # Check accessibility before starting hotkeys (macOS only)
+        self._check_accessibility()
 
         self._rec = Recorder(
             sample_rate=self._cfg.sample_rate,

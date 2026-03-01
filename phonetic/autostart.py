@@ -8,7 +8,11 @@ from .platform_utils import is_frozen
 def _get_command() -> list[str]:
     """Get the command to launch Phonetic."""
     if is_frozen():
-        return [sys.executable]
+        exe = sys.executable
+        if sys.platform == "darwin" and "AppTranslocation" in exe:
+            # macOS runs quarantined apps from a temp path — resolve to /Applications
+            exe = "/Applications/Phonetic.app/Contents/MacOS/phonetic"
+        return [exe]
     # Running via Python/uv — need -m phonetic to launch the package
     return [sys.executable, "-m", "phonetic"]
 
