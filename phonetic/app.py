@@ -128,6 +128,7 @@ class App:
             device=device,
             notify=True,
             system_prompt="",
+            auto_start=True,
         )
 
         def on_first_run_save(cfg: Config) -> None:
