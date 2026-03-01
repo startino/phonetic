@@ -31,10 +31,13 @@ def transcribe(cfg: Config, audio: np.ndarray, sample_rate: int | None = None) -
     payload = {
         "model": cfg.model,
         "messages": [
-            {"role": "system", "content": cfg.system_prompt},
             {
                 "role": "user",
                 "content": [
+                    {
+                        "type": "text",
+                        "text": cfg.system_prompt,
+                    },
                     {
                         "type": "input_audio",
                         "input_audio": {
