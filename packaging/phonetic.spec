@@ -100,5 +100,6 @@ if sys.platform == 'darwin':
             'LSUIElement': True,
             'CFBundleShortVersionString': _version,
             'CFBundleName': 'Phonetic',
+            'NSMicrophoneUsageDescription': 'Phonetic needs microphone access to record audio for transcription.',
         },
     )
