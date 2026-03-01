@@ -38,6 +38,12 @@
 - **Release tags**: After every update, push a semver release tag (`git tag vX.Y.Z && git push origin vX.Y.Z`) to trigger the GitHub Actions release workflow
 - **Verify CI**: After pushing, always check that GitHub Actions succeeded (`gh run list --limit 1` / `gh run view`). If a run fails, diagnose and fix before considering the task done
 
+## Debugging Methodology
+- **Instrument first, fix second**: Never guess at the root cause. Add logging/diagnostics to confirm exactly where in the pipeline things break before changing any logic
+- **Save intermediate artifacts**: For audio/binary pipelines, write intermediate outputs to /tmp (e.g. `/tmp/phonetic_debug.wav`) so they can be inspected independently
+- **Log at each stage**: When data flows through multiple stages (record → encode → API → response), log the shape/size/key properties at each boundary to find where it degrades
+- **Test the fix**: After applying a fix, actually run it and confirm the output changed, don't just assume
+
 ## Dev Commands
 - `uv run phonetic` — GUI mode
 - `uv run phonetic --headless` — headless/systemd mode
