@@ -54,4 +54,10 @@ class Recorder:
             return np.empty((0, self.channels), dtype=np.float32)
         audio = np.concatenate(self._frames, axis=0)
         audio = np.clip(audio, -1.0, 1.0).astype(np.float32)
+        # Diagnostic: audio buffer stats
+        peak = float(np.max(np.abs(audio)))
+        rms = float(np.sqrt(np.mean(audio ** 2)))
+        print(f"[recorder] frames={len(self._frames)}, shape={audio.shape}, "
+              f"dtype={audio.dtype}, peak={peak:.4f}, rms={rms:.6f}, "
+              f"rate={self.sample_rate}Hz")
         return audio
