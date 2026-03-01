@@ -105,7 +105,7 @@ class SettingsWindow(ctk.CTkToplevel):
         )
 
         # Auto-start
-        self._autostart_var = ctk.BooleanVar(value=self._config.auto_start if self._config else False)
+        self._autostart_var = ctk.BooleanVar(value=self._config.auto_start if self._config else self._first_run)
         ctk.CTkCheckBox(self, text="Start at login", variable=self._autostart_var).pack(
             anchor="w", padx=16, pady=(4, 8)
         )
