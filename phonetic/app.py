@@ -202,13 +202,24 @@ class App:
             _log(f"accessibility: EXCEPTION: {exc}")
             pass
 
+    @staticmethod
+    def _accessibility_marker() -> str:
+        """Path to a marker file that records we already prompted for accessibility."""
+        from .config import _config_dir
+        return os.path.join(_config_dir(), ".accessibility_prompted")
+
     def _request_accessibility_interactive(self) -> None:
         """On macOS first run, open System Settings for Accessibility and show
         a blocking messagebox so the user can grant the permission before
-        proceeding."""
+        proceeding.  Only prompts once — a marker file prevents re-prompting
+        on subsequent launches (macOS restarts the app when the user toggles
+        the accessibility switch, which would otherwise create an infinite
+        prompt loop with ad-hoc signed apps)."""
 
         if sys.platform != "darwin":
             return
+
+        # Already trusted → nothing to do
         try:
             from ApplicationServices import AXIsProcessTrustedWithOptions
             trusted = AXIsProcessTrustedWithOptions(None)
@@ -217,6 +228,12 @@ class App:
                 return
         except Exception as exc:
             _log(f"accessibility_interactive: check failed: {exc}")
+            return
+
+        # Already prompted in a previous launch → don't loop
+        marker = self._accessibility_marker()
+        if os.path.exists(marker):
+            _log("accessibility_interactive: marker exists, skipping re-prompt")
             return
 
         # Become foreground so the messagebox is visible
@@ -241,6 +258,15 @@ class App:
             _log(f"accessibility_interactive: prompt request failed: {exc}")
             import subprocess
             subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+
+        # Write marker so we don't re-prompt on relaunch
+        try:
+            os.makedirs(os.path.dirname(marker), exist_ok=True)
+            with open(marker, "w") as f:
+                f.write("")
+            _log(f"accessibility_interactive: wrote marker {marker}")
+        except Exception as exc:
+            _log(f"accessibility_interactive: marker write failed: {exc}")
 
         # Block until user clicks OK
         from tkinter import messagebox
