@@ -88,8 +88,10 @@ class App:
             _log("_run_gui: showing first-run wizard")
             self._show_first_run_wizard()
         else:
-            # Returning user — hide from dock, tray-only presence
+            # Returning user — ensure mic permission while still foreground, then hide
             if sys.platform == "darwin":
+                _log("_run_gui: ensuring mic permission")
+                self._ensure_mic_permission()
                 _log("_run_gui: hiding from dock")
                 self._hide_macos_dock()
             _log("_run_gui: starting services")
@@ -133,8 +135,9 @@ class App:
 
         def on_first_run_save(cfg: Config) -> None:
             self._cfg = cfg
-            # Now hide from dock — wizard is done, switch to tray-only
+            # Trigger mic permission while still a foreground app, then hide
             if sys.platform == "darwin":
+                self._ensure_mic_permission()
                 self._hide_macos_dock()
             self._start_services()
 
@@ -401,6 +404,23 @@ class App:
         SettingsWindow(self._root, self._cfg, on_save=on_settings_save)
 
     # --- macOS dock hiding ---
+
+    def _ensure_mic_permission(self) -> None:
+        """Trigger the macOS mic permission dialog while the app is still foreground.
+
+        Must be called *before* _hide_macos_dock(), otherwise the system
+        permission prompt is invisible behind other windows.
+        """
+        if sys.platform != "darwin":
+            return
+        try:
+            import sounddevice as sd
+            s = sd.InputStream(channels=1, dtype="float32")
+            s.start()
+            s.stop()
+            s.close()
+        except Exception:
+            pass
 
     def _hide_macos_dock(self) -> None:
         try:
