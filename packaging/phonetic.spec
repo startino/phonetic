@@ -95,7 +95,7 @@ if sys.platform == 'darwin':
         coll,
         name='Phonetic.app',
         icon=str(root / 'assets' / 'icon.icns') if (root / 'assets' / 'icon.icns').exists() else None,
-        bundle_identifier='com.startino.phonetic',
+        bundle_identifier='no.starti.phonetic',
         info_plist={
             'LSUIElement': True,
             'CFBundleShortVersionString': _version,

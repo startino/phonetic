@@ -23,7 +23,7 @@ def _get_command() -> list[str]:
 # --- macOS: LaunchAgent plist ---
 
 def _launchagent_path() -> Path:
-    return Path.home() / "Library" / "LaunchAgents" / "com.startino.phonetic.plist"
+    return Path.home() / "Library" / "LaunchAgents" / "no.starti.phonetic.plist"
 
 
 def _set_autostart_macos(enabled: bool) -> None:
@@ -32,7 +32,7 @@ def _set_autostart_macos(enabled: bool) -> None:
     path = _launchagent_path()
     if enabled:
         plist = {
-            "Label": "com.startino.phonetic",
+            "Label": "no.starti.phonetic",
             "ProgramArguments": _get_command(),
             "RunAtLoad": True,
             "KeepAlive": False,
