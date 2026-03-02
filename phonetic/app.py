@@ -272,7 +272,11 @@ class App:
 
         if not self._rec.is_recording:
             # Check mic permission before every recording attempt
-            if not self._check_mic_permission():
+            from .__main__ import _log
+            _log("toggle_recording: checking mic permission")
+            mic_ok = self._check_mic_permission()
+            _log(f"toggle_recording: mic_ok={mic_ok}")
+            if not mic_ok:
                 self._show_mic_denied_dialog()
                 return
             print(f"Recording... Press {self._cfg.hotkey} to stop.")
@@ -416,10 +420,12 @@ class App:
         while the app is a foreground app for the dialog to be visible).
         Returns True if authorized, False otherwise.
         """
+        from .__main__ import _log
         if sys.platform != "darwin":
             return True
         try:
             import objc
+            _log("mic_perm: loading AVFoundation")
             objc.loadBundle(
                 "AVFoundation", {},
                 bundle_path="/System/Library/Frameworks/AVFoundation.framework",
@@ -427,13 +433,16 @@ class App:
             AVCaptureDevice = objc.lookUpClass("AVCaptureDevice")
             # AVMediaTypeAudio = "soun"
             status = AVCaptureDevice.authorizationStatusForMediaType_("soun")
+            _log(f"mic_perm: status = {status} (0=notDetermined, 1=restricted, 2=denied, 3=authorized)")
             if status == 3:  # Authorized
                 return True
             if status == 0:  # Not determined — request access (shows system dialog)
+                _log("mic_perm: requesting access (will show system dialog)")
                 event = threading.Event()
                 granted_box: list[bool] = [False]
 
                 def _handler(granted: bool) -> None:
+                    _log(f"mic_perm: handler called, granted={granted}")
                     granted_box[0] = granted
                     event.set()
 
@@ -441,11 +450,14 @@ class App:
                     "soun", _handler,
                 )
                 event.wait(timeout=60)
+                _log(f"mic_perm: result = {granted_box[0]}")
                 return granted_box[0]
             # Denied (2) or Restricted (1)
+            _log(f"mic_perm: denied/restricted, returning False")
             return False
-        except Exception:
+        except Exception as exc:
             # AVFoundation unavailable — assume OK and let sounddevice handle it
+            _log(f"mic_perm: EXCEPTION: {exc}")
             return True
 
     def _show_mic_denied_dialog(self) -> None:
