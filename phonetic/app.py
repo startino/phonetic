@@ -141,13 +141,17 @@ class App:
             auto_start=True,
         )
 
-        # Start the hotkey manager early so the Test button works during wizard
-        _log("first_run_wizard: starting hotkey manager early")
-        self._hotkeys = HotkeyManager(
-            default_hotkey,
-            on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
-        )
-        self._hotkeys.start()
+        # Start the hotkey manager after the mainloop begins (TSM needs the
+        # main run loop active, or the Listener thread crashes with
+        # dispatch_assert_queue_fail in TSMGetInputSourceProperty).
+        def _start_hotkey_early() -> None:
+            _log("first_run_wizard: starting hotkey manager early")
+            self._hotkeys = HotkeyManager(
+                default_hotkey,
+                on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
+            )
+            self._hotkeys.start()
+        self._root.after(200, _start_hotkey_early)
 
         def on_first_run_save(cfg: Config) -> None:
             self._settings_win = None
