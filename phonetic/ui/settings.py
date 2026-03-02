@@ -4,7 +4,6 @@ import tkinter as tk
 from typing import Optional, Callable
 
 import customtkinter as ctk
-from pynput import keyboard
 
 from ..config import Config, save_config
 from ..constants import DEFAULT_SYSTEM_PROMPT
@@ -97,7 +96,6 @@ class SettingsWindow(ctk.CTkToplevel):
         self._record_btn = ctk.CTkButton(hotkey_frame, text="Record", width=80, command=self._toggle_hotkey_record)
         self._record_btn.pack(side="right", padx=(8, 0))
         self._recording = False
-        self._record_listener: Optional[keyboard.Listener] = None
         self._held_modifiers: set[str] = set()
 
         # Wayland setup section: interactive SIGUSR1 command + AI prompt copy
@@ -205,15 +203,15 @@ class SettingsWindow(ctk.CTkToplevel):
             self._advanced_toggle.configure(text="Advanced \u25bc")
         self._advanced_visible = not self._advanced_visible
 
-    # -- Hotkey recorder --------------------------------------------------
+    # -- Hotkey recorder (tkinter key bindings, main-thread safe) ----------
 
-    _MODIFIER_MAP: dict[str, str] = {
-        "Key.cmd": "<cmd>", "Key.cmd_r": "<cmd>",
-        "Key.shift": "<shift>", "Key.shift_r": "<shift>",
-        "Key.ctrl_l": "<ctrl>", "Key.ctrl_r": "<ctrl>",
-        "Key.alt_l": "<alt>", "Key.alt_r": "<alt>",
-        # Linux names
-        "Key.ctrl": "<ctrl>", "Key.alt": "<alt>",
+    # Map tkinter keysym → pynput modifier token
+    _KEYSYM_TO_MOD: dict[str, str] = {
+        "Meta_L": "<cmd>", "Meta_R": "<cmd>",
+        "Super_L": "<cmd>", "Super_R": "<cmd>",
+        "Shift_L": "<shift>", "Shift_R": "<shift>",
+        "Control_L": "<ctrl>", "Control_R": "<ctrl>",
+        "Alt_L": "<alt>", "Alt_R": "<alt>",
     }
 
     def _toggle_hotkey_record(self) -> None:
@@ -226,63 +224,46 @@ class SettingsWindow(ctk.CTkToplevel):
         self._recording = True
         self._held_modifiers.clear()
         self._record_btn.configure(text="Press keys…")
-        self._record_listener = keyboard.Listener(
-            on_press=self._on_record_key_press,
-            on_release=self._on_record_key_release,
-        )
-        self._record_listener.daemon = True
-        self._record_listener.start()
+        self.bind("<KeyPress>", self._on_record_key_press)
+        self.bind("<KeyRelease>", self._on_record_key_release)
+        self.focus_set()
 
     def _stop_hotkey_record(self, combo: Optional[str] = None) -> None:
         self._recording = False
-        if self._record_listener is not None:
-            self._record_listener.stop()
-            self._record_listener = None
         self._held_modifiers.clear()
+        self.unbind("<KeyPress>")
+        self.unbind("<KeyRelease>")
+        self._record_btn.configure(text="Record")
+        if combo:
+            self._hotkey_var.set(combo)
 
-        def _update_ui() -> None:
-            self._record_btn.configure(text="Record")
-            if combo:
-                self._hotkey_var.set(combo)
-
-        self.after(0, _update_ui)
-
-    def _on_record_key_press(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
-        key_str = str(key)
+    def _on_record_key_press(self, event: tk.Event) -> str:
+        keysym = event.keysym
 
         # Escape cancels
-        if key_str == "Key.escape":
+        if keysym == "Escape":
             self._stop_hotkey_record()
-            return
+            return "break"
 
         # Track modifiers
-        if key_str in self._MODIFIER_MAP:
-            self._held_modifiers.add(self._MODIFIER_MAP[key_str])
-            return
+        mod = self._KEYSYM_TO_MOD.get(keysym)
+        if mod:
+            self._held_modifiers.add(mod)
+            return "break"
 
         # Non-modifier key → build combo and finish
-        if hasattr(key, "char") and key.char is not None:
-            char = key.char
-        elif hasattr(key, "vk") and key.vk is not None:
-            # Modifier held may mangle char; derive from vk for printable ASCII
-            vk = key.vk
-            if 0x20 <= vk <= 0x7E:
-                char = chr(vk).lower()
-            else:
-                char = key_str.replace("Key.", "")
-        else:
-            char = key_str.replace("Key.", "")
-
+        char = keysym.lower() if len(keysym) == 1 else keysym.lower()
         mod_order = ["<cmd>", "<ctrl>", "<alt>", "<shift>"]
         mods = [m for m in mod_order if m in self._held_modifiers]
         parts = mods + [char]
         self._stop_hotkey_record("+".join(parts))
+        return "break"
 
-    def _on_record_key_release(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
-        key_str = str(key)
-        pynput_name = self._MODIFIER_MAP.get(key_str)
-        if pynput_name:
-            self._held_modifiers.discard(pynput_name)
+    def _on_record_key_release(self, event: tk.Event) -> str:
+        mod = self._KEYSYM_TO_MOD.get(event.keysym)
+        if mod:
+            self._held_modifiers.discard(mod)
+        return "break"
 
     def _on_cancel(self) -> None:
         if self._recording:
