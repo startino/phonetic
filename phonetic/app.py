@@ -85,14 +85,12 @@ class App:
 
         _log(f"_run_gui: config loaded, cfg is None = {self._cfg is None}")
         if self._cfg is None:
-            # First run — request all permissions before showing wizard
+            # First run — request mic permission, then show wizard
             if sys.platform == "darwin":
                 _log("_run_gui: requesting mic permission")
                 self._check_mic_permission()
-                _log("_run_gui: requesting accessibility permission")
-                self._ensure_accessibility_then_wizard()
-            else:
-                self._show_first_run_wizard()
+            _log("_run_gui: showing first-run wizard")
+            self._show_first_run_wizard()
         else:
             # Returning user — request mic permission while still foreground, then hide
             if sys.platform == "darwin":
@@ -110,33 +108,6 @@ class App:
 
         # Cleanup
         self._shutdown()
-
-    def _ensure_accessibility_then_wizard(self) -> None:
-        """Check accessibility; if not granted, open System Settings and poll
-        until the user enables it, then show the first-run wizard."""
-        from ApplicationServices import AXIsProcessTrustedWithOptions
-
-        trusted = AXIsProcessTrustedWithOptions(None)
-        _log(f"ensure_accessibility: trusted={trusted}")
-
-        if trusted:
-            self._show_first_run_wizard()
-            return
-
-        # Open System Settings to Accessibility pane
-        import subprocess
-        subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
-        _log("ensure_accessibility: opened System Settings, polling...")
-
-        def _poll():
-            t = AXIsProcessTrustedWithOptions(None)
-            _log(f"ensure_accessibility poll: trusted={t}")
-            if t:
-                self._show_first_run_wizard()
-            else:
-                self._root.after(1000, _poll)
-
-        self._root.after(1000, _poll)
 
     def _show_first_run_wizard(self) -> None:
 
@@ -168,8 +139,17 @@ class App:
 
         def on_first_run_save(cfg: Config) -> None:
             self._cfg = cfg
-            # Permissions already granted before wizard
             if sys.platform == "darwin":
+                # If accessibility not granted, open System Settings directly
+                try:
+                    from ApplicationServices import AXIsProcessTrustedWithOptions
+                    trusted = AXIsProcessTrustedWithOptions(None)
+                    _log(f"first_run_save: accessibility trusted={trusted}")
+                    if not trusted:
+                        import subprocess
+                        subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+                except Exception as exc:
+                    _log(f"first_run_save: accessibility check failed: {exc}")
                 self._hide_macos_dock()
             self._start_services()
 
