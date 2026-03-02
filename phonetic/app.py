@@ -85,7 +85,12 @@ class App:
 
         _log(f"_run_gui: config loaded, cfg is None = {self._cfg is None}")
         if self._cfg is None:
-            # First run — keep dock icon visible so the wizard window is focusable
+            # First run — request all permissions before showing wizard
+            if sys.platform == "darwin":
+                _log("_run_gui: requesting mic permission")
+                self._check_mic_permission()
+                _log("_run_gui: requesting accessibility permission")
+                self._check_accessibility(first_run=True)
             _log("_run_gui: showing first-run wizard")
             self._show_first_run_wizard()
         else:
@@ -136,11 +141,10 @@ class App:
 
         def on_first_run_save(cfg: Config) -> None:
             self._cfg = cfg
-            # Request mic permission while still a foreground app, then hide
+            # Permissions already requested before wizard, just hide and start
             if sys.platform == "darwin":
-                self._check_mic_permission()
                 self._hide_macos_dock()
-            self._start_services(first_run=True)
+            self._start_services()
 
         _log("first_run_wizard: opening SettingsWindow")
         SettingsWindow(self._root, stub_cfg, first_run=True, on_save=on_first_run_save)
