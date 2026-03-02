@@ -60,8 +60,8 @@ rm -rf ~/Applications/Phonetic.app /Applications/Phonetic.app
 rm -rf ~/"Library/Application Support/Phonetic" ~/.config/phonetic
 rm -f ~/Library/Preferences/no.starti.phonetic.plist ~/Library/Preferences/com.startino.phonetic.plist
 rm -f ~/Library/LaunchAgents/no.starti.phonetic.plist ~/Library/LaunchAgents/com.startino.phonetic.plist
-rm -rf ~/"Library/Application Support/CrashReporter/"phonetic_*
-rm -f ~/Library/Logs/DiagnosticReports/phonetic-*.ips
+find ~/"Library/Application Support/CrashReporter" -name "phonetic_*" -delete 2>/dev/null
+find ~/Library/Logs/DiagnosticReports -name "phonetic-*" -delete 2>/dev/null
 rm -f /tmp/phonetic_startup.log /tmp/phonetic_debug.wav
 rm -f ~/Downloads/Phonetic.dmg ~/Downloads/Phonetic.zip 2>/dev/null
 defaults delete com.apple.dock recent-apps 2>/dev/null; killall Dock 2>/dev/null
