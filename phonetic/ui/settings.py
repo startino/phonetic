@@ -251,8 +251,8 @@ class SettingsWindow(ctk.CTkToplevel):
     def _on_record_key_press(self, event: tk.Event) -> str:
         keysym = event.keysym
 
-        from ..log import _log
-        _log(f"KEY keysym={keysym!r} keycode={event.keycode} char={event.char!r} state={event.state:#x}")
+        from ..log import log
+        log(f"KEY keysym={keysym!r} keycode={event.keycode} char={event.char!r} state={event.state:#x}")
 
         # Escape cancels
         if keysym == "Escape":
