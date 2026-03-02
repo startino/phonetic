@@ -35,8 +35,7 @@ class App:
         self._tray: Optional[TrayManager] = None
         self._hotkeys: Optional[HotkeyManager] = None
         self._root: Optional[object] = None  # tk.Tk when in GUI mode
-        self._settings_win = None  # SettingsWindow ref for hotkey test routing
-        self._test_hotkeys: Optional[HotkeyManager] = None  # temp manager for test
+        self._settings_win = None  # SettingsWindow ref for hotkey routing
 
     def run(self) -> None:
         """Main entry point."""
@@ -144,9 +143,6 @@ class App:
 
         def on_first_run_save(cfg: Config) -> None:
             self._settings_win = None
-            if self._test_hotkeys is not None:
-                self._test_hotkeys.stop()
-                self._test_hotkeys = None
             self._cfg = cfg
             if sys.platform == "darwin":
                 self._hide_macos_dock()
@@ -156,7 +152,6 @@ class App:
         self._settings_win = SettingsWindow(
             self._root, stub_cfg, first_run=True,
             on_save=on_first_run_save,
-            on_test_toggle=self._on_test_toggle,
         )
         _log("first_run_wizard: SettingsWindow created")
 
@@ -288,11 +283,10 @@ class App:
         cmd = msg[0]
 
         if cmd == "toggle_recording":
-            # Route to settings test UI if it's active
+            # Route to settings window for visual feedback if open
             if (self._settings_win is not None
-                    and self._settings_win.winfo_exists()
-                    and self._settings_win.is_testing):
-                _log("handle_message: routing hotkey to settings test UI")
+                    and self._settings_win.winfo_exists()):
+                _log("handle_message: routing hotkey to settings window")
                 self._settings_win.notify_hotkey_fired()
             else:
                 self._toggle_recording()
@@ -461,9 +455,6 @@ class App:
 
         def on_settings_save(cfg: Config) -> None:
             self._settings_win = None
-            if self._test_hotkeys is not None:
-                self._test_hotkeys.stop()
-                self._test_hotkeys = None
             old_hotkey = self._cfg.hotkey if self._cfg else None
             self._cfg = cfg
 
@@ -480,32 +471,7 @@ class App:
                 except ValueError as e:
                     print(f"Hotkey error: {e}", file=sys.stderr)
 
-        self._settings_win = SettingsWindow(
-            self._root, self._cfg, on_save=on_settings_save,
-            on_test_toggle=self._on_test_toggle,
-        )
-
-    def _on_test_toggle(self, testing: bool, hotkey: str) -> None:
-        """Handle test start/stop from settings window.
-
-        Creates a temporary HotkeyManager when none exists (first-run) or
-        when the hotkey differs from the active one (user edited the field).
-        """
-        if testing:
-            current = self._cfg.hotkey if self._cfg else ""
-            if self._hotkeys is None or hotkey != current:
-                _log(f"test_toggle: creating temp hotkey manager for {hotkey!r}")
-                self._test_hotkeys = HotkeyManager(
-                    hotkey,
-                    on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
-                )
-                self._test_hotkeys.start()
-            # else: existing hotkey manager handles it via routing
-        else:
-            if self._test_hotkeys is not None:
-                _log("test_toggle: stopping temp hotkey manager")
-                self._test_hotkeys.stop()
-                self._test_hotkeys = None
+        self._settings_win = SettingsWindow(self._root, self._cfg, on_save=on_settings_save)
 
     # --- macOS dock hiding ---
 

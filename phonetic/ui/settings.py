@@ -18,13 +18,11 @@ class SettingsWindow(ctk.CTkToplevel):
         config: Optional[Config],
         first_run: bool = False,
         on_save: Optional[Callable[[Config], None]] = None,
-        on_test_toggle: Optional[Callable[[bool, str], None]] = None,
     ) -> None:
         super().__init__(master)
         self._config = config
         self._first_run = first_run
         self._on_save = on_save
-        self._on_test_toggle = on_test_toggle
         self._cancelled = False
 
         self.title("Phonetic — First Run Setup" if first_run else "Phonetic — Settings")
@@ -96,14 +94,17 @@ class SettingsWindow(ctk.CTkToplevel):
         hotkey_frame.pack(fill="x", padx=16, pady=(0, 4))
         self._hotkey_entry = ctk.CTkEntry(hotkey_frame, textvariable=self._hotkey_var)
         self._hotkey_entry.pack(side="left", fill="x", expand=True)
-        self._test_btn = ctk.CTkButton(hotkey_frame, text="Test", width=60, command=self._toggle_hotkey_test)
-        self._test_btn.pack(side="right", padx=(8, 0))
         self._record_btn = ctk.CTkButton(hotkey_frame, text="Record", width=80, command=self._toggle_hotkey_record)
         self._record_btn.pack(side="right", padx=(8, 0))
-        self._hotkey_status = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=12), anchor="w")
+        self._hotkey_status = ctk.CTkLabel(
+            self,
+            text="Press your hotkey anywhere to verify it works",
+            font=ctk.CTkFont(size=12),
+            text_color=("gray40", "gray60"),
+            anchor="w",
+        )
         self._hotkey_status.pack(fill="x", padx=16, pady=(0, 0))
         self._recording = False
-        self._testing = False
         self._held_modifiers: set[str] = set()
 
         # Wayland setup section: interactive SIGUSR1 command + AI prompt copy
@@ -237,8 +238,6 @@ class SettingsWindow(ctk.CTkToplevel):
         if self._recording:
             self._stop_hotkey_record()
         else:
-            if self._testing:
-                self._stop_hotkey_test()
             self._start_hotkey_record()
 
     def _start_hotkey_record(self) -> None:
@@ -296,61 +295,31 @@ class SettingsWindow(ctk.CTkToplevel):
             self._held_modifiers.discard(mod)
         return "break"
 
-    # -- Hotkey tester (uses real pynput global hotkey via App routing) -------
-
-    @property
-    def is_testing(self) -> bool:
-        return self._testing
-
-    def _toggle_hotkey_test(self) -> None:
-        if self._testing:
-            self._stop_hotkey_test()
-        else:
-            if self._recording:
-                self._stop_hotkey_record()
-            self._start_hotkey_test()
-
-    def _start_hotkey_test(self) -> None:
-        self._testing = True
-        self._test_btn.configure(text="Stop")
-        self._hotkey_status.configure(
-            text="Press your hotkey anywhere to test...",
-            text_color=("gray40", "gray60"),
-        )
-        if self._on_test_toggle:
-            self._on_test_toggle(True, self._hotkey_var.get().strip())
-
-    def _stop_hotkey_test(self) -> None:
-        self._testing = False
-        self._test_btn.configure(text="Test")
-        self._hotkey_status.configure(text="")
-        if self._on_test_toggle:
-            self._on_test_toggle(False, "")
+    # -- Hotkey live verification (routed from App via real pynput) ---------
 
     def notify_hotkey_fired(self) -> None:
-        """Called by App when the real pynput global hotkey fires while testing."""
+        """Called by App when the real pynput global hotkey fires while
+        this settings window is open. Flashes the hotkey entry green."""
         from ..log import log
-        log("TEST: real global hotkey fired — success!")
+        log("settings: global hotkey fired — flashing green")
         self._hotkey_entry.configure(border_color="#22c55e")
         self._hotkey_status.configure(text="Hotkey works!", text_color="#22c55e")
-        self.after(1200, self._reset_hotkey_border)
+        self.after(1200, self._reset_hotkey_status)
 
-    def _reset_hotkey_border(self) -> None:
-        """Reset hotkey entry border after flash."""
+    def _reset_hotkey_status(self) -> None:
+        """Reset hotkey entry border and hint text after flash."""
         try:
             self._hotkey_entry.configure(border_color=ctk.ThemeManager.theme["CTkEntry"]["border_color"])
         except Exception:
             self._hotkey_entry.configure(border_color=("#979DA2", "#565B5E"))
-        if self._testing:
-            self._hotkey_status.configure(text="Press your hotkey to test...", text_color=("gray40", "gray60"))
-        else:
-            self._hotkey_status.configure(text="")
+        self._hotkey_status.configure(
+            text="Press your hotkey anywhere to verify it works",
+            text_color=("gray40", "gray60"),
+        )
 
     def _on_cancel(self) -> None:
         if self._recording:
             self._stop_hotkey_record()
-        if self._testing:
-            self._stop_hotkey_test()
         self._cancelled = True
         if self._first_run and (self._config is None or not self._config.openrouter_api_key):
             from tkinter import messagebox
@@ -368,8 +337,6 @@ class SettingsWindow(ctk.CTkToplevel):
     def _on_save_click(self) -> None:
         if self._recording:
             self._stop_hotkey_record()
-        if self._testing:
-            self._stop_hotkey_test()
         api_key = self._api_key_var.get().strip()
         if not api_key:
             self._api_key_entry.configure(border_color="red")
