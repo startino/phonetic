@@ -181,10 +181,13 @@ class App:
 
     def _start_services(self) -> None:
         """Start recorder, tray, and hotkeys after config is available."""
+        from .__main__ import _log
         assert self._cfg is not None
 
         # Check accessibility before starting hotkeys (macOS only)
+        _log("start_services: checking accessibility")
         self._check_accessibility()
+        _log(f"start_services: creating recorder (sr={self._cfg.sample_rate}, ch={self._cfg.channels}, dev={self._cfg.device})")
 
         self._rec = Recorder(
             sample_rate=self._cfg.sample_rate,
@@ -279,10 +282,13 @@ class App:
             if not mic_ok:
                 self._show_mic_denied_dialog()
                 return
+            _log("toggle_recording: starting recording")
             print(f"Recording... Press {self._cfg.hotkey} to stop.")
             try:
                 self._rec.start()
+                _log(f"toggle_recording: recording started, device={self._rec.device} sr={self._rec.sample_rate}")
             except Exception as e:
+                _log(f"toggle_recording: start FAILED: {e}")
                 print(f"Audio input error: {e}", file=sys.stderr)
                 self._notify(f"Audio input error: {e}", "critical")
                 return
@@ -292,17 +298,20 @@ class App:
         else:
             print("Stopping, processing...")
             audio = self._rec.stop()
+            _log(f"toggle_recording: stopped, audio shape={audio.shape}, size={audio.size}")
             if self._tray:
                 self._tray.set_state(False)
             self._notify("Transcribing...", "low", persist=True, replace=True)
 
             if audio.size == 0:
+                _log("toggle_recording: no audio captured (size=0)")
                 print("No audio captured.")
                 self._notify("No audio captured", "critical", replace=True)
                 return
 
             # Warn if audio is silent (common with wrong device or missing permissions)
             peak = float(np.max(np.abs(audio)))
+            _log(f"toggle_recording: peak={peak:.6f}, duration={audio.shape[0]/self._rec.sample_rate:.2f}s")
             if peak < 0.001:
                 if sys.platform == "darwin":
                     print("Warning: Audio appears silent. Check microphone permissions in "
@@ -464,6 +473,8 @@ class App:
 
     def _show_mic_denied_dialog(self) -> None:
         """Show a dialog telling the user to enable mic permission in System Settings."""
+        from .__main__ import _log
+        _log("mic_denied_dialog: showing")
         try:
             from AppKit import (
                 NSApplication,
