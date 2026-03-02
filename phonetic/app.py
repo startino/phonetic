@@ -92,6 +92,11 @@ class App:
                 self._request_accessibility_interactive()
                 _log("_run_gui: requesting mic permission")
                 self._check_mic_permission()
+                # Reset to Accessory (no dock icon) before starting pynput.
+                # Non-first-run path does this too; matching that timing avoids
+                # the TSM dispatch_assert_queue_fail crash on Sequoia.
+                _log("_run_gui: hiding from dock")
+                self._hide_macos_dock()
             _log("_run_gui: showing first-run wizard")
             self._show_first_run_wizard()
         else:
@@ -141,9 +146,23 @@ class App:
             auto_start=True,
         )
 
+        # Start an early hotkey listener so the user can verify their hotkey
+        # works while still in the wizard.  Same timing as the non-first-run
+        # path (before mainloop) which avoids the TSM crash on Sequoia.
+        _log("first_run_wizard: starting early hotkey listener")
+        self._hotkeys = HotkeyManager(
+            stub_cfg.hotkey,
+            on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
+        )
+        self._hotkeys.start()
+
         def on_first_run_save(cfg: Config) -> None:
             self._settings_win = None
             self._cfg = cfg
+            # Stop the early listener — _start_services creates a fresh one
+            if self._hotkeys is not None:
+                self._hotkeys.stop()
+                self._hotkeys = None
             if sys.platform == "darwin":
                 self._hide_macos_dock()
             self._start_services()
