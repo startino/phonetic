@@ -426,7 +426,7 @@ class App:
         try:
             import objc
             _log("mic_perm: loading AVFoundation")
-            objc.loadBundle(
+            AVFoundation = objc.loadBundle(
                 "AVFoundation", {},
                 bundle_path="/System/Library/Frameworks/AVFoundation.framework",
             )
@@ -446,6 +446,8 @@ class App:
                     granted_box[0] = granted
                     event.set()
 
+                # PyObjC needs explicit block signature for the completion handler
+                _handler.signature = b"v@B"
                 AVCaptureDevice.requestAccessForMediaType_completionHandler_(
                     "soun", _handler,
                 )
@@ -456,9 +458,9 @@ class App:
             _log(f"mic_perm: denied/restricted, returning False")
             return False
         except Exception as exc:
-            # AVFoundation unavailable — assume OK and let sounddevice handle it
             _log(f"mic_perm: EXCEPTION: {exc}")
-            return True
+            # Don't silently assume OK — if we can't check, show the denied dialog
+            return False
 
     def _show_mic_denied_dialog(self) -> None:
         """Show a dialog telling the user to enable mic permission in System Settings."""
