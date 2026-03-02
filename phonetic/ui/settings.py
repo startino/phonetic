@@ -92,10 +92,16 @@ class SettingsWindow(ctk.CTkToplevel):
         )
         hotkey_frame = ctk.CTkFrame(self, fg_color="transparent")
         hotkey_frame.pack(fill="x", padx=16, pady=(0, 4))
-        ctk.CTkEntry(hotkey_frame, textvariable=self._hotkey_var).pack(side="left", fill="x", expand=True)
+        self._hotkey_entry = ctk.CTkEntry(hotkey_frame, textvariable=self._hotkey_var)
+        self._hotkey_entry.pack(side="left", fill="x", expand=True)
+        self._test_btn = ctk.CTkButton(hotkey_frame, text="Test", width=60, command=self._toggle_hotkey_test)
+        self._test_btn.pack(side="right", padx=(8, 0))
         self._record_btn = ctk.CTkButton(hotkey_frame, text="Record", width=80, command=self._toggle_hotkey_record)
         self._record_btn.pack(side="right", padx=(8, 0))
+        self._hotkey_status = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=12), anchor="w")
+        self._hotkey_status.pack(fill="x", padx=16, pady=(0, 0))
         self._recording = False
+        self._testing = False
         self._held_modifiers: set[str] = set()
 
         # Wayland setup section: interactive SIGUSR1 command + AI prompt copy
@@ -229,6 +235,8 @@ class SettingsWindow(ctk.CTkToplevel):
         if self._recording:
             self._stop_hotkey_record()
         else:
+            if self._testing:
+                self._stop_hotkey_test()
             self._start_hotkey_record()
 
     def _start_hotkey_record(self) -> None:
@@ -286,9 +294,93 @@ class SettingsWindow(ctk.CTkToplevel):
             self._held_modifiers.discard(mod)
         return "break"
 
+    # -- Hotkey tester (visual feedback when configured hotkey is pressed) ----
+
+    def _toggle_hotkey_test(self) -> None:
+        if self._testing:
+            self._stop_hotkey_test()
+        else:
+            if self._recording:
+                self._stop_hotkey_record()
+            self._start_hotkey_test()
+
+    def _start_hotkey_test(self) -> None:
+        self._testing = True
+        self._held_modifiers.clear()
+        self._test_btn.configure(text="Stop")
+        self._hotkey_status.configure(text="Press your hotkey to test...", text_color=("gray40", "gray60"))
+        self.bind("<KeyPress>", self._on_test_key_press)
+        self.bind("<KeyRelease>", self._on_test_key_release)
+        self.focus_set()
+
+    def _stop_hotkey_test(self) -> None:
+        self._testing = False
+        self._held_modifiers.clear()
+        self.unbind("<KeyPress>")
+        self.unbind("<KeyRelease>")
+        self._test_btn.configure(text="Test")
+        self._hotkey_status.configure(text="")
+
+    def _on_test_key_press(self, event: tk.Event) -> str:
+        keysym = event.keysym
+        from ..log import log
+        log(f"TEST keysym={keysym!r} keycode={event.keycode} vk={(event.keycode >> 24) & 0xFF}")
+
+        if keysym == "Escape":
+            self._stop_hotkey_test()
+            return "break"
+
+        mod = self._KEYSYM_TO_MOD.get(keysym)
+        if mod:
+            self._held_modifiers.add(mod)
+            return "break"
+
+        # Resolve base key (same logic as recorder)
+        if sys.platform == "darwin" and ((event.keycode >> 24) & 0xFF) in self._MAC_KEYCODE_TO_CHAR:
+            char = self._MAC_KEYCODE_TO_CHAR[(event.keycode >> 24) & 0xFF]
+        elif len(keysym) == 1:
+            char = keysym.lower()
+        else:
+            char = keysym.lower()
+
+        mod_order = ["<cmd>", "<ctrl>", "<alt>", "<shift>"]
+        mods = [m for m in mod_order if m in self._held_modifiers]
+        pressed = "+".join(mods + [char])
+        configured = self._hotkey_var.get().strip()
+
+        log(f"TEST compare: pressed={pressed!r} configured={configured!r}")
+
+        if pressed == configured:
+            self._hotkey_entry.configure(border_color="#22c55e")
+            self._hotkey_status.configure(text="Hotkey works!", text_color="#22c55e")
+        else:
+            self._hotkey_entry.configure(border_color="#ef4444")
+            self._hotkey_status.configure(text=f"Got: {pressed}", text_color="#ef4444")
+        self.after(1200, self._reset_hotkey_border)
+        return "break"
+
+    def _on_test_key_release(self, event: tk.Event) -> str:
+        mod = self._KEYSYM_TO_MOD.get(event.keysym)
+        if mod:
+            self._held_modifiers.discard(mod)
+        return "break"
+
+    def _reset_hotkey_border(self) -> None:
+        """Reset hotkey entry border after flash."""
+        try:
+            self._hotkey_entry.configure(border_color=ctk.ThemeManager.theme["CTkEntry"]["border_color"])
+        except Exception:
+            self._hotkey_entry.configure(border_color=("#979DA2", "#565B5E"))
+        if self._testing:
+            self._hotkey_status.configure(text="Press your hotkey to test...", text_color=("gray40", "gray60"))
+        else:
+            self._hotkey_status.configure(text="")
+
     def _on_cancel(self) -> None:
         if self._recording:
             self._stop_hotkey_record()
+        if self._testing:
+            self._stop_hotkey_test()
         self._cancelled = True
         if self._first_run and (self._config is None or not self._config.openrouter_api_key):
             from tkinter import messagebox
@@ -306,6 +398,8 @@ class SettingsWindow(ctk.CTkToplevel):
     def _on_save_click(self) -> None:
         if self._recording:
             self._stop_hotkey_record()
+        if self._testing:
+            self._stop_hotkey_test()
         api_key = self._api_key_var.get().strip()
         if not api_key:
             self._api_key_entry.configure(border_color="red")

@@ -167,6 +167,11 @@ class App:
                 # Pass None (NULL) to just check without prompting
                 trusted = AXIsProcessTrustedWithOptions(None)
             _log(f"accessibility: trusted={trusted}, first_run={first_run}")
+            if not trusted and not first_run:
+                # Non-first-run: warn the user via notification + console
+                print("Warning: Accessibility permission not granted. Global hotkey will not work.", file=sys.stderr)
+                print("Grant in: System Settings → Privacy & Security → Accessibility", file=sys.stderr)
+                self._notify("Hotkey disabled — grant Accessibility in System Settings", "critical")
             if not trusted and first_run:
                 from AppKit import (
                     NSApplication,
