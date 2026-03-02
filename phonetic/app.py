@@ -277,6 +277,7 @@ class App:
     # --- Recording logic (same as original main.py:301-351) ---
 
     def _toggle_recording(self) -> None:
+        from .__main__ import _log
         if self._cfg is None or self._rec is None:
             return
         with self._processing_lock:
@@ -285,7 +286,6 @@ class App:
 
         if not self._rec.is_recording:
             # Check mic permission before every recording attempt
-            from .__main__ import _log
             _log("toggle_recording: checking mic permission")
             mic_ok = self._check_mic_permission()
             _log(f"toggle_recording: mic_ok={mic_ok}")
