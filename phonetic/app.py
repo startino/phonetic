@@ -88,8 +88,8 @@ class App:
         if self._cfg is None:
             # First run — permissions first, then wizard
             if sys.platform == "darwin":
-                _log("_run_gui: requesting accessibility")
-                self._request_accessibility_interactive()
+                _log("_run_gui: requesting input monitoring")
+                self._request_input_monitoring_interactive()
                 _log("_run_gui: requesting mic permission")
                 self._check_mic_permission()
                 # Reset to Accessory (no dock icon) before starting pynput.
@@ -151,14 +151,14 @@ class App:
         # path (before mainloop) which avoids the TSM crash on Sequoia.
         _log(f"first_run_wizard: starting early hotkey listener for {stub_cfg.hotkey!r}")
 
-        # Log accessibility trust right before listener creation
+        # Log Input Monitoring state right before listener creation
         if sys.platform == "darwin":
             try:
-                from ApplicationServices import AXIsProcessTrustedWithOptions
-                trusted = AXIsProcessTrustedWithOptions(None)
-                _log(f"first_run_wizard: accessibility trusted={trusted} (right before HotkeyManager)")
+                from Quartz import CGPreflightListenEventAccess
+                allowed = CGPreflightListenEventAccess()
+                _log(f"first_run_wizard: CGPreflightListenEventAccess={allowed} (right before HotkeyManager)")
             except Exception as exc:
-                _log(f"first_run_wizard: accessibility check failed: {exc}")
+                _log(f"first_run_wizard: input monitoring check failed: {exc}")
 
         self._hotkeys = HotkeyManager(
             stub_cfg.hotkey,
@@ -185,58 +185,47 @@ class App:
         )
         _log("first_run_wizard: SettingsWindow created")
 
-    def _check_accessibility(self) -> None:
-        """On macOS, check Accessibility permission and warn if not granted."""
+    def _check_input_monitoring(self) -> None:
+        """On macOS, check Input Monitoring permission and warn if not granted.
+
+        pynput uses CGEventTap which requires Input Monitoring, NOT
+        Accessibility.  CGPreflightListenEventAccess is the correct API."""
 
         if sys.platform != "darwin":
             return
         try:
-            from ApplicationServices import AXIsProcessTrustedWithOptions
-            trusted = AXIsProcessTrustedWithOptions(None)
-            _log(f"accessibility: trusted={trusted}")
-            if not trusted:
-                print("Warning: Accessibility permission not granted. Global hotkey will not work.", file=sys.stderr)
-                print("Grant in: System Settings → Privacy & Security → Accessibility", file=sys.stderr)
-                self._notify("Hotkey disabled — grant Accessibility in System Settings", "critical")
+            from Quartz import CGPreflightListenEventAccess
+            allowed = CGPreflightListenEventAccess()
+            _log(f"input_monitoring: CGPreflightListenEventAccess={allowed}")
+            if not allowed:
+                print("Warning: Input Monitoring permission not granted. Global hotkey will not work.", file=sys.stderr)
+                print("Grant in: System Settings → Privacy & Security → Input Monitoring", file=sys.stderr)
+                self._notify("Hotkey disabled — grant Input Monitoring in System Settings", "critical")
         except Exception as exc:
-            _log(f"accessibility: EXCEPTION: {exc}")
-            pass
+            _log(f"input_monitoring: EXCEPTION: {exc}")
 
-    @staticmethod
-    def _accessibility_marker() -> str:
-        """Path to a marker file that records we already prompted for accessibility."""
-        from .config import _config_dir
-        return os.path.join(_config_dir(), ".accessibility_prompted")
+    def _request_input_monitoring_interactive(self) -> None:
+        """On macOS first run, request Input Monitoring permission.
 
-    def _request_accessibility_interactive(self) -> None:
-        """On macOS first run, open System Settings for Accessibility and show
-        a blocking messagebox so the user can grant the permission before
-        proceeding.  Only prompts once — a marker file prevents re-prompting
-        on subsequent launches (macOS restarts the app when the user toggles
-        the accessibility switch, which would otherwise create an infinite
-        prompt loop with ad-hoc signed apps)."""
+        CGRequestListenEventAccess triggers the system prompt that adds
+        the app to the Input Monitoring list.  Unlike Accessibility,
+        this uses the correct TCC category for CGEventTap (pynput)."""
 
         if sys.platform != "darwin":
             return
 
-        # Already trusted → nothing to do
+        # Already permitted → nothing to do
         try:
-            from ApplicationServices import AXIsProcessTrustedWithOptions
-            trusted = AXIsProcessTrustedWithOptions(None)
-            _log(f"accessibility_interactive: already trusted={trusted}")
-            if trusted:
+            from Quartz import CGPreflightListenEventAccess
+            allowed = CGPreflightListenEventAccess()
+            _log(f"input_monitoring_interactive: CGPreflightListenEventAccess={allowed}")
+            if allowed:
                 return
         except Exception as exc:
-            _log(f"accessibility_interactive: check failed: {exc}")
+            _log(f"input_monitoring_interactive: preflight failed: {exc}")
             return
 
-        # Already prompted in a previous launch → don't loop
-        marker = self._accessibility_marker()
-        if os.path.exists(marker):
-            _log("accessibility_interactive: marker exists, skipping re-prompt")
-            return
-
-        # Become foreground so the messagebox is visible
+        # Become foreground so the system prompt is visible
         try:
             from AppKit import (
                 NSApplication,
@@ -246,47 +235,43 @@ class App:
             app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
             app.activateIgnoringOtherApps_(True)
         except Exception as exc:
-            _log(f"accessibility_interactive: foreground failed: {exc}")
+            _log(f"input_monitoring_interactive: foreground failed: {exc}")
 
-        # Request with prompt — this registers the app in the accessibility
-        # list in System Settings so the user can find and toggle it on.
-        # Without the prompt option the app may not appear in the list at all.
-        _log("accessibility_interactive: requesting with prompt (adds app to list)")
+        # Request — triggers the system "allow Input Monitoring?" prompt
+        _log("input_monitoring_interactive: calling CGRequestListenEventAccess")
         try:
-            AXIsProcessTrustedWithOptions({"AXTrustedCheckOptionPrompt": True})
+            from Quartz import CGRequestListenEventAccess
+            CGRequestListenEventAccess()
         except Exception as exc:
-            _log(f"accessibility_interactive: prompt request failed: {exc}")
-            import subprocess
-            subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
-
-        # Write marker so we don't re-prompt on relaunch
-        try:
-            os.makedirs(os.path.dirname(marker), exist_ok=True)
-            with open(marker, "w") as f:
-                f.write("")
-            _log(f"accessibility_interactive: wrote marker {marker}")
-        except Exception as exc:
-            _log(f"accessibility_interactive: marker write failed: {exc}")
+            _log(f"input_monitoring_interactive: request failed: {exc}")
 
         # Block until user clicks OK
         from tkinter import messagebox
         messagebox.showinfo(
-            "Phonetic — Accessibility Permission",
-            "Phonetic needs Accessibility permission for global hotkeys.\n\n"
-            "1. In the System Settings window that just opened, "
+            "Phonetic — Input Monitoring Permission",
+            "Phonetic needs Input Monitoring permission for global hotkeys.\n\n"
+            "1. In the system dialog or System Settings, "
             "find Phonetic and toggle it ON\n"
             "2. Click OK here when done",
         )
-        _log("accessibility_interactive: user dismissed dialog")
+        _log("input_monitoring_interactive: user dismissed dialog")
+
+        # Re-check after user interaction
+        try:
+            from Quartz import CGPreflightListenEventAccess
+            allowed = CGPreflightListenEventAccess()
+            _log(f"input_monitoring_interactive: after dialog, CGPreflightListenEventAccess={allowed}")
+        except Exception:
+            pass
 
     def _start_services(self) -> None:
         """Start recorder, tray, and hotkeys after config is available."""
 
         assert self._cfg is not None
 
-        # Check accessibility before starting hotkeys (macOS only)
-        _log("start_services: checking accessibility")
-        self._check_accessibility()
+        # Check Input Monitoring before starting hotkeys (macOS only)
+        _log("start_services: checking input monitoring")
+        self._check_input_monitoring()
         _log(f"start_services: creating recorder (sr={self._cfg.sample_rate}, ch={self._cfg.channels}, dev={self._cfg.device})")
 
         self._rec = Recorder(

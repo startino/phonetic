@@ -140,14 +140,14 @@ class _PynputHotkeyManager(_PidFileMixin):
         kb = _load_pynput()
         from .log import log
 
-        # Log accessibility trust state right before creating listener
+        # Log Input Monitoring permission state right before creating listener
         if sys.platform == "darwin":
             try:
-                from ApplicationServices import AXIsProcessTrustedWithOptions
-                trusted = AXIsProcessTrustedWithOptions(None)
-                log(f"hotkey.start: accessibility trusted={trusted}")
+                from Quartz import CGPreflightListenEventAccess
+                allowed = CGPreflightListenEventAccess()
+                log(f"hotkey.start: CGPreflightListenEventAccess={allowed}")
             except Exception as exc:
-                log(f"hotkey.start: accessibility check failed: {exc}")
+                log(f"hotkey.start: input monitoring check failed: {exc}")
 
             try:
                 from AppKit import NSApplication
