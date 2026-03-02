@@ -16,15 +16,19 @@ def _check_macos_installation() -> None:
     import shutil
     import subprocess
 
-    # Temporarily become a foreground app so the dialog is visible
-    # (LSUIElement hides us from the dock, making windows unfocusable)
-    from AppKit import NSApplication, NSApplicationActivationPolicyRegular
-    NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyRegular)
-
+    # Tk must initialise its own NSApplication *before* we touch AppKit,
+    # otherwise Tk's internal GetRGBA crashes with "unrecognized selector".
     import tkinter as tk
     from tkinter import messagebox
     root = tk.Tk()
     root.withdraw()
+
+    # Now make the app a foreground app so the dialog is visible
+    # (LSUIElement hides us from the dock, making windows unfocusable)
+    from AppKit import NSApplication, NSApplicationActivationPolicyRegular
+    NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyRegular)
+    root.lift()
+    root.attributes("-topmost", True)
 
     # Walk up from the executable to find the .app bundle
     app_bundle = exe
