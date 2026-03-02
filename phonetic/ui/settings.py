@@ -251,9 +251,6 @@ class SettingsWindow(ctk.CTkToplevel):
     def _on_record_key_press(self, event: tk.Event) -> str:
         keysym = event.keysym
 
-        from ..log import log
-        log(f"KEY keysym={keysym!r} keycode={event.keycode} char={event.char!r} state={event.state:#x}")
-
         # Escape cancels
         if keysym == "Escape":
             self._stop_hotkey_record()
@@ -268,8 +265,9 @@ class SettingsWindow(ctk.CTkToplevel):
         # Non-modifier key → resolve base key and build combo
         # On macOS, held modifiers change keysym (e.g. Cmd+Alt+r → "registered")
         # so use the hardware keycode to get the unmodified key.
-        if sys.platform == "darwin" and event.keycode in self._MAC_KEYCODE_TO_CHAR:
-            char = self._MAC_KEYCODE_TO_CHAR[event.keycode]
+        # On macOS, tkinter encodes the virtual keycode in the upper byte
+        if sys.platform == "darwin" and ((event.keycode >> 24) & 0xFF) in self._MAC_KEYCODE_TO_CHAR:
+            char = self._MAC_KEYCODE_TO_CHAR[(event.keycode >> 24) & 0xFF]
         elif len(keysym) == 1:
             char = keysym.lower()
         else:
