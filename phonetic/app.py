@@ -90,9 +90,9 @@ class App:
                 _log("_run_gui: requesting mic permission")
                 self._check_mic_permission()
                 _log("_run_gui: requesting accessibility permission")
-                self._check_accessibility(first_run=True)
-            _log("_run_gui: showing first-run wizard")
-            self._show_first_run_wizard()
+                self._ensure_accessibility_then_wizard()
+            else:
+                self._show_first_run_wizard()
         else:
             # Returning user — request mic permission while still foreground, then hide
             if sys.platform == "darwin":
@@ -110,6 +110,33 @@ class App:
 
         # Cleanup
         self._shutdown()
+
+    def _ensure_accessibility_then_wizard(self) -> None:
+        """Check accessibility; if not granted, open System Settings and poll
+        until the user enables it, then show the first-run wizard."""
+        from ApplicationServices import AXIsProcessTrustedWithOptions
+
+        trusted = AXIsProcessTrustedWithOptions(None)
+        _log(f"ensure_accessibility: trusted={trusted}")
+
+        if trusted:
+            self._show_first_run_wizard()
+            return
+
+        # Open System Settings to Accessibility pane
+        import subprocess
+        subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+        _log("ensure_accessibility: opened System Settings, polling...")
+
+        def _poll():
+            t = AXIsProcessTrustedWithOptions(None)
+            _log(f"ensure_accessibility poll: trusted={t}")
+            if t:
+                self._show_first_run_wizard()
+            else:
+                self._root.after(1000, _poll)
+
+        self._root.after(1000, _poll)
 
     def _show_first_run_wizard(self) -> None:
 
@@ -141,17 +168,8 @@ class App:
 
         def on_first_run_save(cfg: Config) -> None:
             self._cfg = cfg
+            # Permissions already granted before wizard
             if sys.platform == "darwin":
-                # If accessibility still not granted, open System Settings directly
-                try:
-                    from ApplicationServices import AXIsProcessTrustedWithOptions
-                    trusted = AXIsProcessTrustedWithOptions(None)
-                    _log(f"first_run_save: accessibility trusted={trusted}")
-                    if not trusted:
-                        import subprocess
-                        subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
-                except Exception as exc:
-                    _log(f"first_run_save: accessibility check failed: {exc}")
                 self._hide_macos_dock()
             self._start_services()
 
@@ -159,49 +177,35 @@ class App:
         SettingsWindow(self._root, stub_cfg, first_run=True, on_save=on_first_run_save)
         _log("first_run_wizard: SettingsWindow created")
 
-    def _check_accessibility(self, first_run: bool = False) -> None:
-        """On macOS, check Accessibility permission (needed for global hotkeys).
+    def _check_accessibility(self) -> None:
+        """On macOS, check Accessibility permission and warn if not granted.
 
-        Only shows the system prompt on first run to avoid repeatedly opening
-        System Settings on every launch (ad-hoc signed apps on Sequoia can
-        have their accessibility trust reset between launches).
+        Used on non-first-run launches. First-run uses
+        _ensure_accessibility_then_wizard() which polls until granted.
         """
 
         if sys.platform != "darwin":
             return
         try:
             from ApplicationServices import AXIsProcessTrustedWithOptions
-            from CoreFoundation import kCFBooleanTrue
-
-            if first_run:
-                options = {"AXTrustedCheckOptionPrompt": kCFBooleanTrue}
-                trusted = AXIsProcessTrustedWithOptions(options)
-            else:
-                # Pass None (NULL) to just check without prompting
-                trusted = AXIsProcessTrustedWithOptions(None)
-            _log(f"accessibility: trusted={trusted}, first_run={first_run}")
-            if not trusted and not first_run:
-                # Non-first-run: warn the user via notification + console
+            trusted = AXIsProcessTrustedWithOptions(None)
+            _log(f"accessibility: trusted={trusted}")
+            if not trusted:
                 print("Warning: Accessibility permission not granted. Global hotkey will not work.", file=sys.stderr)
                 print("Grant in: System Settings → Privacy & Security → Accessibility", file=sys.stderr)
                 self._notify("Hotkey disabled — grant Accessibility in System Settings", "critical")
-            if not trusted and first_run:
-                # AXTrustedCheckOptionPrompt already triggered the system prompt;
-                # System Settings will be opened automatically when user clicks
-                # "Get Started" in the wizard (see on_first_run_save).
-                pass
         except Exception as exc:
             _log(f"accessibility: EXCEPTION: {exc}")
             pass
 
-    def _start_services(self, first_run: bool = False) -> None:
+    def _start_services(self) -> None:
         """Start recorder, tray, and hotkeys after config is available."""
 
         assert self._cfg is not None
 
         # Check accessibility before starting hotkeys (macOS only)
         _log("start_services: checking accessibility")
-        self._check_accessibility(first_run=first_run)
+        self._check_accessibility()
         _log(f"start_services: creating recorder (sr={self._cfg.sample_rate}, ch={self._cfg.channels}, dev={self._cfg.device})")
 
         self._rec = Recorder(
