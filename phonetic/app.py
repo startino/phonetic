@@ -422,10 +422,12 @@ class App:
             from .autostart import set_autostart
             set_autostart(cfg.auto_start)
 
-            # Update hotkey if changed
+            # Update hotkey if changed (requires restart on macOS)
             if self._hotkeys and old_hotkey != cfg.hotkey:
                 try:
                     self._hotkeys.update_hotkey(cfg.hotkey)
+                    if sys.platform == "darwin":
+                        self._notify("Restart Phonetic for the new hotkey to take effect")
                 except ValueError as e:
                     print(f"Hotkey error: {e}", file=sys.stderr)
 

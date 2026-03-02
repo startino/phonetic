@@ -109,13 +109,11 @@ class _PynputHotkeyManager(_PidFileMixin):
         error = validate_hotkey(new_hotkey)
         if error:
             raise ValueError(f"Invalid hotkey '{new_hotkey}': {error}")
-        if self._listener is not None:
-            self._listener.stop()
         self._hotkey = new_hotkey
-        kb = _load_pynput()
-        self._listener = kb.GlobalHotKeys({self._hotkey: self._on_toggle})
-        self._listener.daemon = True
-        self._listener.start()
+        # Don't recreate the pynput listener — on macOS, creating a new
+        # GlobalHotKeys listener after stopping one crashes with
+        # dispatch_assert_queue_fail in TSMGetInputSourceProperty.
+        # The new hotkey takes effect on next restart.
 
 
 class _SignalOnlyHotkeyManager(_PidFileMixin):
