@@ -83,21 +83,101 @@ class _PidFileMixin:
 
 
 class _PynputHotkeyManager(_PidFileMixin):
-    """Hotkey manager using pynput GlobalHotKeys + SIGUSR1 fallback on Linux."""
+    """Hotkey manager using pynput Listener with vk-based matching on macOS,
+    or GlobalHotKeys on other platforms. SIGUSR1 fallback on Linux."""
 
     signal_only = False
+
+    # macOS: char → virtual keycode (Option key composes characters, so
+    # GlobalHotKeys can't match e.g. <cmd>+<alt>+r because it sees '®').
+    _CHAR_TO_VK: dict[str, int] = {
+        "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7,
+        "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15,
+        "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22,
+        "5": 23, "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29,
+        "]": 30, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35, "l": 37,
+        "j": 38, "k": 40, ",": 43, "/": 44, "n": 45, "m": 46, ".": 47,
+        "space": 49, "`": 50,
+    }
+
+    # pynput Key.name values that map to each modifier
+    _MOD_KEYS: dict[str, set[str]] = {
+        "cmd": {"cmd", "cmd_r"},
+        "shift": {"shift", "shift_r"},
+        "ctrl": {"ctrl", "ctrl_l", "ctrl_r"},
+        "alt": {"alt", "alt_l", "alt_r"},
+    }
+
+    _MOD_TOKENS: dict[str, str] = {
+        "<cmd>": "cmd", "<shift>": "shift", "<ctrl>": "ctrl", "<alt>": "alt",
+    }
 
     def __init__(self, hotkey: str, on_toggle: Callable[[], None]) -> None:
         self._hotkey = hotkey
         self._on_toggle = on_toggle
         self._listener = None
+        self._held_mods: set[str] = set()
+        self._required_mods, self._target_vk = self._parse_hotkey(hotkey)
+
+    @classmethod
+    def _parse_hotkey(cls, hotkey: str) -> tuple[frozenset[str], Optional[int]]:
+        """Parse '<cmd>+<alt>+r' → (frozenset({'cmd', 'alt'}), 15)."""
+        parts = hotkey.split("+")
+        mods: set[str] = set()
+        key_char: Optional[str] = None
+        for p in parts:
+            if p in cls._MOD_TOKENS:
+                mods.add(cls._MOD_TOKENS[p])
+            else:
+                key_char = p
+        vk = cls._CHAR_TO_VK.get(key_char) if key_char else None
+        from .log import log
+        log(f"hotkey parse: {hotkey!r} → mods={mods} key={key_char!r} vk={vk}")
+        return frozenset(mods), vk
 
     def start(self) -> None:
         self._setup_sigusr1(self._on_toggle)
         kb = _load_pynput()
-        self._listener = kb.GlobalHotKeys({self._hotkey: self._on_toggle})
+        if sys.platform == "darwin" and self._target_vk is not None:
+            # macOS: use vk-based matching (GlobalHotKeys fails with alt/option
+            # because Option composes characters, e.g. Alt+R → '®' not 'r')
+            from .log import log
+            log(f"hotkey: using vk-based listener (mods={self._required_mods}, vk={self._target_vk})")
+            self._listener = kb.Listener(
+                on_press=self._on_press,
+                on_release=self._on_release,
+            )
+        else:
+            from .log import log
+            log(f"hotkey: using GlobalHotKeys for {self._hotkey!r}")
+            self._listener = kb.GlobalHotKeys({self._hotkey: self._on_toggle})
         self._listener.daemon = True
         self._listener.start()
+
+    def _on_press(self, key) -> None:
+        kb = _load_pynput()
+        if isinstance(key, kb.Key):
+            name = key.name
+            for mod, names in self._MOD_KEYS.items():
+                if name in names:
+                    self._held_mods.add(mod)
+                    return
+            return
+        # Regular key — check vk match
+        vk = getattr(key, "vk", None)
+        from .log import log
+        log(f"hotkey vk check: vk={vk} target={self._target_vk} held={self._held_mods} required={self._required_mods}")
+        if vk == self._target_vk and self._held_mods == self._required_mods:
+            self._on_toggle()
+
+    def _on_release(self, key) -> None:
+        kb = _load_pynput()
+        if isinstance(key, kb.Key):
+            name = key.name
+            for mod, names in self._MOD_KEYS.items():
+                if name in names:
+                    self._held_mods.discard(mod)
+                    return
 
     def stop(self) -> None:
         if self._listener is not None:
@@ -110,8 +190,9 @@ class _PynputHotkeyManager(_PidFileMixin):
         if error:
             raise ValueError(f"Invalid hotkey '{new_hotkey}': {error}")
         self._hotkey = new_hotkey
+        self._required_mods, self._target_vk = self._parse_hotkey(new_hotkey)
         # Don't recreate the pynput listener — on macOS, creating a new
-        # GlobalHotKeys listener after stopping one crashes with
+        # Listener after stopping one crashes with
         # dispatch_assert_queue_fail in TSMGetInputSourceProperty.
         # The new hotkey takes effect on next restart.
 
