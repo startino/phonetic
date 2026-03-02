@@ -204,12 +204,19 @@ class App:
         except Exception as exc:
             _log(f"input_monitoring: EXCEPTION: {exc}")
 
+    @staticmethod
+    def _input_monitoring_marker() -> str:
+        """Path to a marker that records we already prompted for Input Monitoring."""
+        from .config import _config_dir
+        return os.path.join(_config_dir(), ".input_monitoring_prompted")
+
     def _request_input_monitoring_interactive(self) -> None:
         """On macOS first run, request Input Monitoring permission.
 
-        CGRequestListenEventAccess triggers the system prompt that adds
-        the app to the Input Monitoring list.  Unlike Accessibility,
-        this uses the correct TCC category for CGEventTap (pynput)."""
+        Only prompts once — a marker file prevents re-prompting on
+        subsequent launches (macOS restarts the app when the user toggles
+        the permission, which creates an infinite prompt loop with
+        ad-hoc signed apps)."""
 
         if sys.platform != "darwin":
             return
@@ -225,7 +232,13 @@ class App:
             _log(f"input_monitoring_interactive: preflight failed: {exc}")
             return
 
-        # Become foreground so the system prompt is visible
+        # Already prompted → don't loop
+        marker = self._input_monitoring_marker()
+        if os.path.exists(marker):
+            _log("input_monitoring_interactive: marker exists, skipping re-prompt")
+            return
+
+        # Become foreground so the dialog is visible
         try:
             from AppKit import (
                 NSApplication,
@@ -237,7 +250,7 @@ class App:
         except Exception as exc:
             _log(f"input_monitoring_interactive: foreground failed: {exc}")
 
-        # Request — triggers the system "allow Input Monitoring?" prompt
+        # Try the API request first (works for properly signed apps)
         _log("input_monitoring_interactive: calling CGRequestListenEventAccess")
         try:
             from Quartz import CGRequestListenEventAccess
@@ -245,14 +258,30 @@ class App:
         except Exception as exc:
             _log(f"input_monitoring_interactive: request failed: {exc}")
 
+        # Also open System Settings directly to Input Monitoring pane
+        # (for ad-hoc signed apps the API prompt may not register the app)
+        _log("input_monitoring_interactive: opening System Settings Input Monitoring")
+        import subprocess
+        subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"])
+
+        # Write marker before the blocking dialog so relaunches skip
+        try:
+            os.makedirs(os.path.dirname(marker), exist_ok=True)
+            with open(marker, "w") as f:
+                f.write("")
+            _log(f"input_monitoring_interactive: wrote marker {marker}")
+        except Exception as exc:
+            _log(f"input_monitoring_interactive: marker write failed: {exc}")
+
         # Block until user clicks OK
         from tkinter import messagebox
         messagebox.showinfo(
             "Phonetic — Input Monitoring Permission",
             "Phonetic needs Input Monitoring permission for global hotkeys.\n\n"
-            "1. In the system dialog or System Settings, "
-            "find Phonetic and toggle it ON\n"
-            "2. Click OK here when done",
+            "1. In System Settings → Privacy & Security → Input Monitoring\n"
+            "2. Click the + button and add Phonetic from Applications\n"
+            "3. Toggle Phonetic ON\n"
+            "4. Click OK here when done",
         )
         _log("input_monitoring_interactive: user dismissed dialog")
 
