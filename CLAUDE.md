@@ -57,10 +57,10 @@
 hdiutil detach /Volumes/Phonetic 2>/dev/null; hdiutil detach "/Volumes/Phonetic 1" 2>/dev/null; hdiutil detach "/Volumes/Phonetic 2" 2>/dev/null
 pkill -9 -f "phonetic" 2>/dev/null; pkill -9 -f "Phonetic" 2>/dev/null
 rm -rf ~/Applications/Phonetic.app /Applications/Phonetic.app
-rm -rf "$HOME/Library/Application Support/Phonetic" ~/.config/phonetic
+rm -rf ~/"Library/Application Support/Phonetic" ~/.config/phonetic
 rm -f ~/Library/Preferences/no.starti.phonetic.plist ~/Library/Preferences/com.startino.phonetic.plist
 rm -f ~/Library/LaunchAgents/no.starti.phonetic.plist ~/Library/LaunchAgents/com.startino.phonetic.plist
-rm -rf "$HOME/Library/Application Support/CrashReporter/"phonetic_*
+rm -rf ~/"Library/Application Support/CrashReporter/"phonetic_*
 rm -f ~/Library/Logs/DiagnosticReports/phonetic-*.ips
 rm -f /tmp/phonetic_startup.log /tmp/phonetic_debug.wav
 rm -f ~/Downloads/Phonetic.dmg ~/Downloads/Phonetic.zip 2>/dev/null
