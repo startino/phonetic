@@ -40,12 +40,44 @@
 - **Work autonomously**: Don't ask for confirmation on routine decisions — just do the work, verify, and report results
 - **Release tags**: After every update, push a semver release tag (`git tag vX.Y.Z && git push origin vX.Y.Z`) to trigger the GitHub Actions release workflow
 - **Verify CI**: After pushing, always check that GitHub Actions succeeded (`gh run list --limit 1` / `gh run view`). If a run fails, diagnose and fix before considering the task done
+- **Full clean before every install test**: Always do a nuclear cleanup before installing a new build — never do partial reinstalls. User wants end-to-end verification that the full install flow works from scratch every time. See cleanup procedure below
 
 ## Debugging Methodology
 - **Instrument first, fix second**: Never guess at the root cause. Add logging/diagnostics to confirm exactly where in the pipeline things break before changing any logic
 - **Save intermediate artifacts**: For audio/binary pipelines, write intermediate outputs to /tmp (e.g. `/tmp/phonetic_debug.wav`) so they can be inspected independently
 - **Log at each stage**: When data flows through multiple stages (record → encode → API → response), log the shape/size/key properties at each boundary to find where it degrades
 - **Test the fix**: After applying a fix, actually run it and confirm the output changed, don't just assume
+
+## macOS Install Testing
+
+### Nuclear cleanup (run before EVERY install test)
+```bash
+pkill -9 -f "phonetic" 2>/dev/null; pkill -9 -f "Phonetic" 2>/dev/null
+rm -rf ~/Applications/Phonetic.app /Applications/Phonetic.app
+rm -rf ~/Library/Application\ Support/Phonetic ~/.config/phonetic
+rm -f ~/Library/Preferences/no.starti.phonetic.plist ~/Library/Preferences/com.startino.phonetic.plist
+rm -f ~/Library/LaunchAgents/no.starti.phonetic.plist ~/Library/LaunchAgents/com.startino.phonetic.plist
+rm -f ~/Library/Application\ Support/CrashReporter/phonetic_*.plist
+rm -f ~/Library/Logs/DiagnosticReports/phonetic-*.ips
+rm -f /tmp/phonetic_startup.log /tmp/phonetic_debug.wav
+rm -f ~/Downloads/Phonetic.dmg ~/Downloads/Phonetic.zip 2>/dev/null
+hdiutil detach /Volumes/Phonetic 2>/dev/null; hdiutil detach "/Volumes/Phonetic 1" 2>/dev/null; hdiutil detach "/Volumes/Phonetic 2" 2>/dev/null
+defaults delete com.apple.dock recent-apps 2>/dev/null; killall Dock 2>/dev/null
+tccutil reset Microphone no.starti.phonetic 2>/dev/null; tccutil reset Accessibility no.starti.phonetic 2>/dev/null
+tccutil reset Microphone com.startino.phonetic 2>/dev/null; tccutil reset Accessibility com.startino.phonetic 2>/dev/null
+# Verify — nothing should remain outside source repo, uv cache, and claude memory
+find ~ /tmp -name "*phonetic*" -o -name "*Phonetic*" 2>/dev/null | grep -v "/vcs/" | grep -v "/.cache/uv/" | grep -v "/.claude/"
+```
+
+### Install from release
+```bash
+gh release download vX.Y.Z --pattern "Phonetic.dmg" --dir ~/Downloads
+hdiutil attach ~/Downloads/Phonetic.dmg -nobrowse
+mkdir -p ~/Applications
+cp -R "/Volumes/Phonetic/Phonetic.app" ~/Applications/
+xattr -cr ~/Applications/Phonetic.app
+open ~/Applications/Phonetic.app
+```
 
 ## Dev Commands
 - `uv run phonetic` — GUI mode

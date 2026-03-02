@@ -4,6 +4,7 @@ import tkinter as tk
 from typing import Optional, Callable
 
 import customtkinter as ctk
+from pynput import keyboard
 
 from ..config import Config, save_config
 from ..constants import DEFAULT_SYSTEM_PROMPT
@@ -90,7 +91,14 @@ class SettingsWindow(ctk.CTkToplevel):
         self._hotkey_var = ctk.StringVar(
             value=self._config.hotkey if self._config else default_hotkey
         )
-        ctk.CTkEntry(self, textvariable=self._hotkey_var).pack(fill="x", padx=16, pady=(0, 4))
+        hotkey_frame = ctk.CTkFrame(self, fg_color="transparent")
+        hotkey_frame.pack(fill="x", padx=16, pady=(0, 4))
+        ctk.CTkEntry(hotkey_frame, textvariable=self._hotkey_var).pack(side="left", fill="x", expand=True)
+        self._record_btn = ctk.CTkButton(hotkey_frame, text="Record", width=80, command=self._toggle_hotkey_record)
+        self._record_btn.pack(side="right", padx=(8, 0))
+        self._recording = False
+        self._record_listener: Optional[keyboard.Listener] = None
+        self._held_modifiers: set[str] = set()
 
         # Wayland setup section: interactive SIGUSR1 command + AI prompt copy
         if sys.platform.startswith("linux"):
@@ -197,7 +205,105 @@ class SettingsWindow(ctk.CTkToplevel):
             self._advanced_toggle.configure(text="Advanced \u25bc")
         self._advanced_visible = not self._advanced_visible
 
+    # -- Hotkey recorder --------------------------------------------------
+
+    _MODIFIER_MAP: dict[str, str] = {
+        "Key.cmd": "<cmd>", "Key.cmd_r": "<cmd>",
+        "Key.shift": "<shift>", "Key.shift_r": "<shift>",
+        "Key.ctrl_l": "<ctrl>", "Key.ctrl_r": "<ctrl>",
+        "Key.alt_l": "<alt>", "Key.alt_r": "<alt>",
+        # Linux names
+        "Key.ctrl": "<ctrl>", "Key.alt": "<alt>",
+    }
+
+    def _toggle_hotkey_record(self) -> None:
+        if self._recording:
+            self._stop_hotkey_record()
+        else:
+            self._start_hotkey_record()
+
+    def _start_hotkey_record(self) -> None:
+        self._recording = True
+        self._held_modifiers.clear()
+        self._record_btn.configure(text="Press keys…")
+        self._record_listener = keyboard.Listener(
+            on_press=self._on_record_key_press,
+            on_release=self._on_record_key_release,
+        )
+        self._record_listener.daemon = True
+        self._record_listener.start()
+
+    def _stop_hotkey_record(self, combo: Optional[str] = None) -> None:
+        self._recording = False
+        if self._record_listener is not None:
+            self._record_listener.stop()
+            self._record_listener = None
+        self._held_modifiers.clear()
+
+        def _update_ui() -> None:
+            self._record_btn.configure(text="Record")
+            if combo:
+                self._hotkey_var.set(combo)
+
+        self.after(0, _update_ui)
+
+    def _on_record_key_press(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
+        key_str = str(key)
+
+        # Escape cancels
+        if key_str == "Key.escape":
+            self._stop_hotkey_record()
+            return
+
+        # Track modifiers
+        if key_str in self._MODIFIER_MAP:
+            self._held_modifiers.add(self._MODIFIER_MAP[key_str])
+            return
+
+        # Non-modifier key → build combo and finish
+        if hasattr(key, "char") and key.char is not None:
+            char = key.char
+        elif hasattr(key, "vk") and key.vk is not None:
+            # Modifier held may mangle char; derive from vk for printable ASCII
+            vk = key.vk
+            if 0x20 <= vk <= 0x7E:
+                char = chr(vk).lower()
+            else:
+                char = key_str.replace("Key.", "")
+        else:
+            char = key_str.replace("Key.", "")
+
+        mod_order = ["<cmd>", "<ctrl>", "<alt>", "<shift>"]
+        mods = [m for m in mod_order if m in self._held_modifiers]
+        parts = mods + [char]
+        self._stop_hotkey_record("+".join(parts))
+
+    def _on_record_key_release(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
+        key_str = str(key)
+        pynput_name = self._MODIFIER_MAP.get(key_str)
+        if pynput_name:
+            self._held_modifiers.discard(pynput_name)
+
+    def _on_cancel(self) -> None:
+        if self._recording:
+            self._stop_hotkey_record()
+        self._cancelled = True
+        if self._first_run and (self._config is None or not self._config.openrouter_api_key):
+            from tkinter import messagebox
+            if messagebox.askyesno(
+                "Phonetic",
+                "No API key configured. Phonetic cannot function without one.\n\nQuit?",
+                parent=self,
+            ):
+                self.master.quit()
+                return
+            else:
+                return
+        self.destroy()
+
     def _on_save_click(self) -> None:
+        if self._recording:
+            self._stop_hotkey_record()
         api_key = self._api_key_var.get().strip()
         if not api_key:
             self._api_key_entry.configure(border_color="red")
@@ -235,22 +341,6 @@ class SettingsWindow(ctk.CTkToplevel):
         if self._on_save:
             self._on_save(new_cfg)
 
-        self.destroy()
-
-    def _on_cancel(self) -> None:
-        self._cancelled = True
-        if self._first_run and (self._config is None or not self._config.openrouter_api_key):
-            # Warn that app can't function
-            from tkinter import messagebox
-            if messagebox.askyesno(
-                "Phonetic",
-                "No API key configured. Phonetic cannot function without one.\n\nQuit?",
-                parent=self,
-            ):
-                self.master.quit()
-                return
-            else:
-                return
         self.destroy()
 
     @property
