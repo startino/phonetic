@@ -141,30 +141,12 @@ class App:
             auto_start=True,
         )
 
-        # Start the hotkey manager after the mainloop begins (TSM needs the
-        # main run loop active, or the Listener thread crashes with
-        # dispatch_assert_queue_fail in TSMGetInputSourceProperty).
-        def _start_hotkey_early() -> None:
-            _log("first_run_wizard: starting hotkey manager early")
-            self._hotkeys = HotkeyManager(
-                default_hotkey,
-                on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
-            )
-            self._hotkeys.start()
-        self._root.after(200, _start_hotkey_early)
-
         def on_first_run_save(cfg: Config) -> None:
             self._settings_win = None
             self._cfg = cfg
-            # Update hotkey if user changed it during wizard
-            if self._hotkeys and cfg.hotkey != default_hotkey:
-                try:
-                    self._hotkeys.update_hotkey(cfg.hotkey)
-                except ValueError as e:
-                    _log(f"first_run_save: hotkey update error: {e}")
             if sys.platform == "darwin":
                 self._hide_macos_dock()
-            self._start_services(skip_hotkey=True)
+            self._start_services()
 
         _log("first_run_wizard: opening SettingsWindow")
         self._settings_win = SettingsWindow(self._root, stub_cfg, first_run=True, on_save=on_first_run_save)
@@ -232,7 +214,7 @@ class App:
         )
         _log("accessibility_interactive: user dismissed dialog")
 
-    def _start_services(self, skip_hotkey: bool = False) -> None:
+    def _start_services(self) -> None:
         """Start recorder, tray, and hotkeys after config is available."""
 
         assert self._cfg is not None
@@ -253,13 +235,12 @@ class App:
         self._tray.set_device(self._cfg.device, self._cfg.device)
         self._tray.run()
 
-        # Start hotkeys (skip if already started during first-run wizard)
-        if not skip_hotkey:
-            self._hotkeys = HotkeyManager(
-                self._cfg.hotkey,
-                on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
-            )
-            self._hotkeys.start()
+        # Start hotkeys
+        self._hotkeys = HotkeyManager(
+            self._cfg.hotkey,
+            on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
+        )
+        self._hotkeys.start()
 
         # Check for updates in the background
         threading.Thread(target=self._check_for_update, daemon=True).start()
