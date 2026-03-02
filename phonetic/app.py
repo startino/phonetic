@@ -9,6 +9,7 @@ import numpy as np
 
 from .clipboard import copy_to_clipboard
 from .config import Config, load_config
+from .log import log as _log
 from .constants import MIN_DURATION_SECS, WARN_DURATION_SECS
 from .hotkeys import HotkeyManager
 from .notifications import notify
@@ -56,7 +57,7 @@ class App:
     # --- GUI mode ---
 
     def _run_gui(self) -> None:
-        from .__main__ import _log
+
         _log("_run_gui: importing customtkinter")
         import customtkinter as ctk
 
@@ -106,7 +107,7 @@ class App:
         self._shutdown()
 
     def _show_first_run_wizard(self) -> None:
-        from .__main__ import _log
+
         from .ui.settings import SettingsWindow
         from .audio_detect import detect_audio
 
@@ -152,7 +153,7 @@ class App:
         System Settings on every launch (ad-hoc signed apps on Sequoia can
         have their accessibility trust reset between launches).
         """
-        from .__main__ import _log
+
         if sys.platform != "darwin":
             return
         try:
@@ -191,7 +192,7 @@ class App:
 
     def _start_services(self, first_run: bool = False) -> None:
         """Start recorder, tray, and hotkeys after config is available."""
-        from .__main__ import _log
+
         assert self._cfg is not None
 
         # Check accessibility before starting hotkeys (macOS only)
@@ -277,7 +278,7 @@ class App:
     # --- Recording logic (same as original main.py:301-351) ---
 
     def _toggle_recording(self) -> None:
-        from .__main__ import _log
+
         if self._cfg is None or self._rec is None:
             return
         with self._processing_lock:
@@ -439,7 +440,7 @@ class App:
         (must be called while the app is a foreground app for the dialog to be
         visible). Returns True if authorized, False otherwise.
         """
-        from .__main__ import _log
+
         if sys.platform != "darwin":
             return True
         try:
@@ -509,7 +510,7 @@ class App:
 
     def _show_mic_denied_dialog(self) -> None:
         """Show a dialog telling the user to enable mic permission in System Settings."""
-        from .__main__ import _log
+
         _log("mic_denied_dialog: showing")
         try:
             from AppKit import (

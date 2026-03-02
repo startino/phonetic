@@ -65,17 +65,8 @@ def _check_macos_installation() -> None:
     sys.exit(0)
 
 
-def _log(msg: str) -> None:
-    """Append a diagnostic line to /tmp/phonetic_startup.log."""
-    import time
-    try:
-        with open("/tmp/phonetic_startup.log", "a") as f:
-            f.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
-    except Exception:
-        pass
-
-
 def main() -> None:
+    from .log import log as _log
     _log("main() entered")
     _check_macos_installation()
     _log("installation check passed")

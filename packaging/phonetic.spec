@@ -35,6 +35,7 @@ a = Analysis(
         'phonetic.tray',
         'phonetic.notifications',
         'phonetic.autostart',
+        'phonetic.log',
         'phonetic.update_check',
         'phonetic.ui',
         'phonetic.ui.settings',
