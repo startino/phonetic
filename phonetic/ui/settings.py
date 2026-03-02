@@ -294,7 +294,11 @@ class SettingsWindow(ctk.CTkToplevel):
             self._held_modifiers.discard(mod)
         return "break"
 
-    # -- Hotkey tester (visual feedback when configured hotkey is pressed) ----
+    # -- Hotkey tester (uses real pynput global hotkey via App) ----------------
+
+    @property
+    def is_testing(self) -> bool:
+        return self._testing
 
     def _toggle_hotkey_test(self) -> None:
         if self._testing:
@@ -306,64 +310,21 @@ class SettingsWindow(ctk.CTkToplevel):
 
     def _start_hotkey_test(self) -> None:
         self._testing = True
-        self._held_modifiers.clear()
         self._test_btn.configure(text="Stop")
         self._hotkey_status.configure(text="Press your hotkey to test...", text_color=("gray40", "gray60"))
-        self.bind("<KeyPress>", self._on_test_key_press)
-        self.bind("<KeyRelease>", self._on_test_key_release)
-        self.focus_set()
 
     def _stop_hotkey_test(self) -> None:
         self._testing = False
-        self._held_modifiers.clear()
-        self.unbind("<KeyPress>")
-        self.unbind("<KeyRelease>")
         self._test_btn.configure(text="Test")
         self._hotkey_status.configure(text="")
 
-    def _on_test_key_press(self, event: tk.Event) -> str:
-        keysym = event.keysym
+    def notify_hotkey_fired(self) -> None:
+        """Called by App when the real pynput hotkey fires while testing."""
         from ..log import log
-        log(f"TEST keysym={keysym!r} keycode={event.keycode} vk={(event.keycode >> 24) & 0xFF}")
-
-        if keysym == "Escape":
-            self._stop_hotkey_test()
-            return "break"
-
-        mod = self._KEYSYM_TO_MOD.get(keysym)
-        if mod:
-            self._held_modifiers.add(mod)
-            return "break"
-
-        # Resolve base key (same logic as recorder)
-        if sys.platform == "darwin" and ((event.keycode >> 24) & 0xFF) in self._MAC_KEYCODE_TO_CHAR:
-            char = self._MAC_KEYCODE_TO_CHAR[(event.keycode >> 24) & 0xFF]
-        elif len(keysym) == 1:
-            char = keysym.lower()
-        else:
-            char = keysym.lower()
-
-        mod_order = ["<cmd>", "<ctrl>", "<alt>", "<shift>"]
-        mods = [m for m in mod_order if m in self._held_modifiers]
-        pressed = "+".join(mods + [char])
-        configured = self._hotkey_var.get().strip()
-
-        log(f"TEST compare: pressed={pressed!r} configured={configured!r}")
-
-        if pressed == configured:
-            self._hotkey_entry.configure(border_color="#22c55e")
-            self._hotkey_status.configure(text="Hotkey works!", text_color="#22c55e")
-        else:
-            self._hotkey_entry.configure(border_color="#ef4444")
-            self._hotkey_status.configure(text=f"Got: {pressed}", text_color="#ef4444")
+        log("TEST: real hotkey fired — success!")
+        self._hotkey_entry.configure(border_color="#22c55e")
+        self._hotkey_status.configure(text="Hotkey works!", text_color="#22c55e")
         self.after(1200, self._reset_hotkey_border)
-        return "break"
-
-    def _on_test_key_release(self, event: tk.Event) -> str:
-        mod = self._KEYSYM_TO_MOD.get(event.keysym)
-        if mod:
-            self._held_modifiers.discard(mod)
-        return "break"
 
     def _reset_hotkey_border(self) -> None:
         """Reset hotkey entry border after flash."""

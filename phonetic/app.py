@@ -35,6 +35,7 @@ class App:
         self._tray: Optional[TrayManager] = None
         self._hotkeys: Optional[HotkeyManager] = None
         self._root: Optional[object] = None  # tk.Tk when in GUI mode
+        self._settings_win = None  # SettingsWindow ref for hotkey test routing
 
     def run(self) -> None:
         """Main entry point."""
@@ -85,8 +86,10 @@ class App:
 
         _log(f"_run_gui: config loaded, cfg is None = {self._cfg is None}")
         if self._cfg is None:
-            # First run — request mic permission, then show wizard
+            # First run — permissions first, then wizard
             if sys.platform == "darwin":
+                _log("_run_gui: requesting accessibility")
+                self._request_accessibility_interactive()
                 _log("_run_gui: requesting mic permission")
                 self._check_mic_permission()
             _log("_run_gui: showing first-run wizard")
@@ -125,10 +128,11 @@ class App:
             messagebox.showerror("Phonetic", str(e))
             self._root.quit()
             return
+        default_hotkey = "<cmd>+<shift>+r" if sys.platform == "darwin" else "<ctrl>+<alt>+r"
         stub_cfg = Config(
             openrouter_api_key="",
             model="google/gemini-3-flash-preview",
-            hotkey="<cmd>+<shift>+r" if sys.platform == "darwin" else "<ctrl>+<alt>+r",
+            hotkey=default_hotkey,
             sample_rate=sample_rate,
             channels=channels,
             device=device,
@@ -137,32 +141,33 @@ class App:
             auto_start=True,
         )
 
+        # Start the hotkey manager early so the Test button works during wizard
+        _log("first_run_wizard: starting hotkey manager early")
+        self._hotkeys = HotkeyManager(
+            default_hotkey,
+            on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
+        )
+        self._hotkeys.start()
+
         def on_first_run_save(cfg: Config) -> None:
+            self._settings_win = None
             self._cfg = cfg
-            if sys.platform == "darwin":
-                # If accessibility not granted, open System Settings directly
+            # Update hotkey if user changed it during wizard
+            if self._hotkeys and cfg.hotkey != default_hotkey:
                 try:
-                    from ApplicationServices import AXIsProcessTrustedWithOptions
-                    trusted = AXIsProcessTrustedWithOptions(None)
-                    _log(f"first_run_save: accessibility trusted={trusted}")
-                    if not trusted:
-                        import subprocess
-                        subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
-                except Exception as exc:
-                    _log(f"first_run_save: accessibility check failed: {exc}")
+                    self._hotkeys.update_hotkey(cfg.hotkey)
+                except ValueError as e:
+                    _log(f"first_run_save: hotkey update error: {e}")
+            if sys.platform == "darwin":
                 self._hide_macos_dock()
-            self._start_services()
+            self._start_services(skip_hotkey=True)
 
         _log("first_run_wizard: opening SettingsWindow")
-        SettingsWindow(self._root, stub_cfg, first_run=True, on_save=on_first_run_save)
+        self._settings_win = SettingsWindow(self._root, stub_cfg, first_run=True, on_save=on_first_run_save)
         _log("first_run_wizard: SettingsWindow created")
 
     def _check_accessibility(self) -> None:
-        """On macOS, check Accessibility permission and warn if not granted.
-
-        Used on non-first-run launches. First-run uses
-        _ensure_accessibility_then_wizard() which polls until granted.
-        """
+        """On macOS, check Accessibility permission and warn if not granted."""
 
         if sys.platform != "darwin":
             return
@@ -178,7 +183,52 @@ class App:
             _log(f"accessibility: EXCEPTION: {exc}")
             pass
 
-    def _start_services(self) -> None:
+    def _request_accessibility_interactive(self) -> None:
+        """On macOS first run, open System Settings for Accessibility and show
+        a blocking messagebox so the user can grant the permission before
+        proceeding."""
+
+        if sys.platform != "darwin":
+            return
+        try:
+            from ApplicationServices import AXIsProcessTrustedWithOptions
+            trusted = AXIsProcessTrustedWithOptions(None)
+            _log(f"accessibility_interactive: already trusted={trusted}")
+            if trusted:
+                return
+        except Exception as exc:
+            _log(f"accessibility_interactive: check failed: {exc}")
+            return
+
+        # Become foreground so the messagebox is visible
+        try:
+            from AppKit import (
+                NSApplication,
+                NSApplicationActivationPolicyRegular,
+            )
+            app = NSApplication.sharedApplication()
+            app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+            app.activateIgnoringOtherApps_(True)
+        except Exception as exc:
+            _log(f"accessibility_interactive: foreground failed: {exc}")
+
+        # Open System Settings to the Accessibility pane
+        import subprocess
+        _log("accessibility_interactive: opening System Settings")
+        subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+
+        # Block until user clicks OK
+        from tkinter import messagebox
+        messagebox.showinfo(
+            "Phonetic — Accessibility Permission",
+            "Phonetic needs Accessibility permission for global hotkeys.\n\n"
+            "1. In the System Settings window that just opened, "
+            "find Phonetic and toggle it ON\n"
+            "2. Click OK here when done",
+        )
+        _log("accessibility_interactive: user dismissed dialog")
+
+    def _start_services(self, skip_hotkey: bool = False) -> None:
         """Start recorder, tray, and hotkeys after config is available."""
 
         assert self._cfg is not None
@@ -199,12 +249,13 @@ class App:
         self._tray.set_device(self._cfg.device, self._cfg.device)
         self._tray.run()
 
-        # Start hotkeys
-        self._hotkeys = HotkeyManager(
-            self._cfg.hotkey,
-            on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
-        )
-        self._hotkeys.start()
+        # Start hotkeys (skip if already started during first-run wizard)
+        if not skip_hotkey:
+            self._hotkeys = HotkeyManager(
+                self._cfg.hotkey,
+                on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
+            )
+            self._hotkeys.start()
 
         # Check for updates in the background
         threading.Thread(target=self._check_for_update, daemon=True).start()
@@ -238,7 +289,14 @@ class App:
         cmd = msg[0]
 
         if cmd == "toggle_recording":
-            self._toggle_recording()
+            # Route to settings test UI if it's active
+            if (self._settings_win is not None
+                    and self._settings_win.winfo_exists()
+                    and self._settings_win.is_testing):
+                _log("handle_message: routing hotkey to settings test UI")
+                self._settings_win.notify_hotkey_fired()
+            else:
+                self._toggle_recording()
         elif cmd == "show_settings":
             self._show_settings()
         elif cmd == "quit":
@@ -403,6 +461,7 @@ class App:
         from .ui.settings import SettingsWindow
 
         def on_settings_save(cfg: Config) -> None:
+            self._settings_win = None
             old_hotkey = self._cfg.hotkey if self._cfg else None
             self._cfg = cfg
 
@@ -419,7 +478,7 @@ class App:
                 except ValueError as e:
                     print(f"Hotkey error: {e}", file=sys.stderr)
 
-        SettingsWindow(self._root, self._cfg, on_save=on_settings_save)
+        self._settings_win = SettingsWindow(self._root, self._cfg, on_save=on_settings_save)
 
     # --- macOS dock hiding ---
 
