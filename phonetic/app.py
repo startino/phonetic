@@ -141,8 +141,17 @@ class App:
 
         def on_first_run_save(cfg: Config) -> None:
             self._cfg = cfg
-            # Permissions already requested before wizard, just hide and start
             if sys.platform == "darwin":
+                # If accessibility still not granted, open System Settings directly
+                try:
+                    from ApplicationServices import AXIsProcessTrustedWithOptions
+                    trusted = AXIsProcessTrustedWithOptions(None)
+                    _log(f"first_run_save: accessibility trusted={trusted}")
+                    if not trusted:
+                        import subprocess
+                        subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+                except Exception as exc:
+                    _log(f"first_run_save: accessibility check failed: {exc}")
                 self._hide_macos_dock()
             self._start_services()
 
@@ -177,24 +186,10 @@ class App:
                 print("Grant in: System Settings → Privacy & Security → Accessibility", file=sys.stderr)
                 self._notify("Hotkey disabled — grant Accessibility in System Settings", "critical")
             if not trusted and first_run:
-                from AppKit import (
-                    NSApplication,
-                    NSApplicationActivationPolicyRegular,
-                    NSApplicationActivationPolicyAccessory,
-                )
-                app = NSApplication.sharedApplication()
-                app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
-
-                from tkinter import messagebox
-                messagebox.showwarning(
-                    "Phonetic — Accessibility Required",
-                    "Phonetic needs Accessibility permission for the global hotkey.\n\n"
-                    "1. Open System Settings \u2192 Privacy & Security \u2192 Accessibility\n"
-                    "2. Find Phonetic and toggle it ON\n"
-                    "3. Restart Phonetic",
-                )
-
-                app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+                # AXTrustedCheckOptionPrompt already triggered the system prompt;
+                # System Settings will be opened automatically when user clicks
+                # "Get Started" in the wizard (see on_first_run_save).
+                pass
         except Exception as exc:
             _log(f"accessibility: EXCEPTION: {exc}")
             pass
