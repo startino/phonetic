@@ -51,21 +51,53 @@ echo "Signed $SIGNED binaries."
 codesign --verify --deep --strict "$APP" 2>&1 && echo "Signature verification: OK" \
     || echo "WARNING: Signature verification reported issues (may be expected for ad-hoc)"
 
+# --- Create installer shell script ---
+# macOS Sequoia blocks ad-hoc signed apps via AppTranslocation/provenance,
+# so the app can't self-install from the DMG. Ship a tiny shell installer
+# that copies the app to ~/Applications and launches it.
+INSTALLER="$DIST/Install Phonetic.command"
+cat > "$INSTALLER" << 'SCRIPT'
+#!/bin/bash
+set -e
+SRC="$(dirname "$0")/Phonetic.app"
+DEST="$HOME/Applications"
+APP="$DEST/Phonetic.app"
+if [ ! -d "$SRC" ]; then
+    echo "ERROR: Phonetic.app not found next to this installer." >&2
+    read -p "Press Enter to close..." _
+    exit 1
+fi
+echo "Installing Phonetic to $DEST..."
+mkdir -p "$DEST"
+[ -d "$APP" ] && rm -rf "$APP"
+cp -R "$SRC" "$APP"
+xattr -cr "$APP" 2>/dev/null || true
+echo "Done! Launching Phonetic..."
+open "$APP"
+exit 0
+SCRIPT
+chmod +x "$INSTALLER"
+
 # --- Create DMG ---
-# No /Applications symlink — the app self-installs to ~/Applications on first
-# launch because macOS Sequoia blocks ad-hoc signed apps in /Applications.
 echo "Creating DMG..."
 DMG="$DIST/Phonetic.dmg"
+STAGE="$DIST/dmg_stage"
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+cp -R "$APP" "$STAGE/"
+cp "$INSTALLER" "$STAGE/"
 
 if command -v create-dmg &>/dev/null; then
     create-dmg \
         --volname "Phonetic" \
         --window-pos 200 120 \
-        --window-size 400 300 \
+        --window-size 500 300 \
         --icon-size 100 \
-        --icon "Phonetic.app" 200 120 \
-        "$DMG" "$APP"
+        --icon "Phonetic.app" 125 120 \
+        --icon "Install Phonetic.command" 375 120 \
+        "$DMG" "$STAGE"
 else
-    hdiutil create -volname "Phonetic" -srcfolder "$APP" -ov -format UDZO "$DMG"
+    hdiutil create -volname "Phonetic" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 fi
+rm -rf "$STAGE"
 echo "Done: $DMG"
