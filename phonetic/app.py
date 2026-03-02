@@ -446,11 +446,19 @@ class App:
             if status == 3:  # Authorized
                 return True
             if status == 0:  # Not determined — trigger the system dialog
-                _log("mic_perm: not determined, opening audio stream to trigger dialog")
+                _log("mic_perm: not determined, becoming foreground app to trigger dialog")
                 try:
+                    from AppKit import (
+                        NSApplication,
+                        NSApplicationActivationPolicyRegular,
+                    )
+                    app = NSApplication.sharedApplication()
+                    app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+                    app.activateIgnoringOtherApps_(True)
+                    _log("mic_perm: set to foreground, opening audio stream")
+
                     import sounddevice as sd
                     # Opening an input stream triggers the macOS mic permission dialog.
-                    # We keep it open and poll until the user responds.
                     stream = sd.InputStream(samplerate=16000, channels=1, blocksize=1024)
                     stream.start()
                     _log("mic_perm: stream opened, waiting for user to respond to dialog")
