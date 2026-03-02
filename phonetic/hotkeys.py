@@ -138,26 +138,67 @@ class _PynputHotkeyManager(_PidFileMixin):
     def start(self) -> None:
         self._setup_sigusr1(self._on_toggle)
         kb = _load_pynput()
+        from .log import log
+
+        # Log accessibility trust state right before creating listener
+        if sys.platform == "darwin":
+            try:
+                from ApplicationServices import AXIsProcessTrustedWithOptions
+                trusted = AXIsProcessTrustedWithOptions(None)
+                log(f"hotkey.start: accessibility trusted={trusted}")
+            except Exception as exc:
+                log(f"hotkey.start: accessibility check failed: {exc}")
+
+            try:
+                from AppKit import NSApplication
+                app = NSApplication.sharedApplication()
+                policy = app.activationPolicy()
+                log(f"hotkey.start: activationPolicy={policy} (0=Regular, 1=Accessory, 2=Prohibited)")
+            except Exception as exc:
+                log(f"hotkey.start: activationPolicy check failed: {exc}")
+
         if sys.platform == "darwin" and self._target_vk is not None:
             # macOS: use vk-based matching (GlobalHotKeys fails with alt/option
             # because Option composes characters, e.g. Alt+R → '®' not 'r')
-            from .log import log
             log(f"hotkey: using vk-based listener (mods={self._required_mods}, vk={self._target_vk})")
             self._listener = kb.Listener(
                 on_press=self._on_press,
                 on_release=self._on_release,
             )
         else:
-            from .log import log
             log(f"hotkey: using GlobalHotKeys for {self._hotkey!r}")
             self._listener = kb.GlobalHotKeys({self._hotkey: self._on_toggle})
         self._listener.daemon = True
+        log(f"hotkey.start: calling listener.start() (thread={threading.current_thread().name})")
         self._listener.start()
+        log(f"hotkey.start: listener.start() returned, listener.is_alive()={self._listener.is_alive()}")
+
+        # Check listener thread state after a brief delay
+        import time
+        time.sleep(0.2)
+        log(f"hotkey.start: after 200ms, listener.is_alive()={self._listener.is_alive()}")
+
+        # On macOS, inspect the CGEventTap via pynput internals
+        if sys.platform == "darwin":
+            try:
+                tap = getattr(self._listener, '_tap', None)
+                log(f"hotkey.start: listener._tap={tap}")
+                if tap is not None:
+                    is_enabled = getattr(tap, 'is_enabled', None)
+                    log(f"hotkey.start: tap.is_enabled={is_enabled}")
+            except Exception as exc:
+                log(f"hotkey.start: tap inspection failed: {exc}")
+            # Also try to inspect _loop and _port
+            for attr in ('_loop', '_port', '_tap', '_event_mask'):
+                val = getattr(self._listener, attr, 'MISSING')
+                log(f"hotkey.start: listener.{attr}={val}")
 
     def _on_press(self, key) -> None:
+        from .log import log
         kb = _load_pynput()
         if isinstance(key, kb.Key):
             name = key.name
+            log(f"hotkey _on_press: special key={name}")
             for mod, names in self._MOD_KEYS.items():
                 if name in names:
                     self._held_mods.add(mod)
@@ -165,15 +206,18 @@ class _PynputHotkeyManager(_PidFileMixin):
             return
         # Regular key — check vk match
         vk = getattr(key, "vk", None)
-        from .log import log
-        log(f"hotkey vk check: vk={vk} target={self._target_vk} held={self._held_mods} required={self._required_mods}")
+        char = getattr(key, "char", None)
+        log(f"hotkey _on_press: char={char!r} vk={vk} target_vk={self._target_vk} held={self._held_mods} required={self._required_mods}")
         if vk == self._target_vk and self._held_mods == self._required_mods:
+            log("hotkey _on_press: MATCH — firing on_toggle")
             self._on_toggle()
 
     def _on_release(self, key) -> None:
+        from .log import log
         kb = _load_pynput()
         if isinstance(key, kb.Key):
             name = key.name
+            log(f"hotkey _on_release: special key={name}")
             for mod, names in self._MOD_KEYS.items():
                 if name in names:
                     self._held_mods.discard(mod)

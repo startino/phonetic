@@ -149,12 +149,23 @@ class App:
         # Start an early hotkey listener so the user can verify their hotkey
         # works while still in the wizard.  Same timing as the non-first-run
         # path (before mainloop) which avoids the TSM crash on Sequoia.
-        _log("first_run_wizard: starting early hotkey listener")
+        _log(f"first_run_wizard: starting early hotkey listener for {stub_cfg.hotkey!r}")
+
+        # Log accessibility trust right before listener creation
+        if sys.platform == "darwin":
+            try:
+                from ApplicationServices import AXIsProcessTrustedWithOptions
+                trusted = AXIsProcessTrustedWithOptions(None)
+                _log(f"first_run_wizard: accessibility trusted={trusted} (right before HotkeyManager)")
+            except Exception as exc:
+                _log(f"first_run_wizard: accessibility check failed: {exc}")
+
         self._hotkeys = HotkeyManager(
             stub_cfg.hotkey,
             on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
         )
         self._hotkeys.start()
+        _log(f"first_run_wizard: early hotkey listener started, self._hotkeys={self._hotkeys}")
 
         def on_first_run_save(cfg: Config) -> None:
             self._settings_win = None
@@ -300,9 +311,11 @@ class App:
 
     def _handle_message(self, msg: tuple[str, ...]) -> None:
         cmd = msg[0]
+        _log(f"handle_message: cmd={cmd!r}")
 
         if cmd == "toggle_recording":
             # Route to settings window for visual feedback if open
+            _log(f"handle_message: toggle_recording, settings_win={self._settings_win}, cfg={self._cfg is not None}")
             if (self._settings_win is not None
                     and self._settings_win.winfo_exists()):
                 _log("handle_message: routing hotkey to settings window")
