@@ -139,24 +139,34 @@ class App:
             if sys.platform == "darwin":
                 self._check_mic_permission()
                 self._hide_macos_dock()
-            self._start_services()
+            self._start_services(first_run=True)
 
         _log("first_run_wizard: opening SettingsWindow")
         SettingsWindow(self._root, stub_cfg, first_run=True, on_save=on_first_run_save)
         _log("first_run_wizard: SettingsWindow created")
 
-    def _check_accessibility(self) -> None:
-        """On macOS, prompt for Accessibility permission (needed for global hotkeys)."""
+    def _check_accessibility(self, first_run: bool = False) -> None:
+        """On macOS, check Accessibility permission (needed for global hotkeys).
+
+        Only shows the system prompt on first run to avoid repeatedly opening
+        System Settings on every launch (ad-hoc signed apps on Sequoia can
+        have their accessibility trust reset between launches).
+        """
+        from .__main__ import _log
         if sys.platform != "darwin":
             return
         try:
             from ApplicationServices import AXIsProcessTrustedWithOptions
             from CoreFoundation import kCFBooleanTrue
 
-            options = {"AXTrustedCheckOptionPrompt": kCFBooleanTrue}
+            # Only use the prompt flag on first run — otherwise just check silently
+            if first_run:
+                options = {"AXTrustedCheckOptionPrompt": kCFBooleanTrue}
+            else:
+                options = {}
             trusted = AXIsProcessTrustedWithOptions(options)
-            if not trusted:
-                # Temporarily become foreground app so the dialog is visible
+            _log(f"accessibility: trusted={trusted}, first_run={first_run}")
+            if not trusted and first_run:
                 from AppKit import (
                     NSApplication,
                     NSApplicationActivationPolicyRegular,
@@ -174,19 +184,18 @@ class App:
                     "3. Restart Phonetic",
                 )
 
-                # Go back to accessory (tray-only) mode
                 app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         except ImportError:
             pass
 
-    def _start_services(self) -> None:
+    def _start_services(self, first_run: bool = False) -> None:
         """Start recorder, tray, and hotkeys after config is available."""
         from .__main__ import _log
         assert self._cfg is not None
 
         # Check accessibility before starting hotkeys (macOS only)
         _log("start_services: checking accessibility")
-        self._check_accessibility()
+        self._check_accessibility(first_run=first_run)
         _log(f"start_services: creating recorder (sr={self._cfg.sample_rate}, ch={self._cfg.channels}, dev={self._cfg.device})")
 
         self._rec = Recorder(
