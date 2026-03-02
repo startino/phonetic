@@ -159,12 +159,12 @@ class App:
             from ApplicationServices import AXIsProcessTrustedWithOptions
             from CoreFoundation import kCFBooleanTrue
 
-            # Only use the prompt flag on first run — otherwise just check silently
             if first_run:
                 options = {"AXTrustedCheckOptionPrompt": kCFBooleanTrue}
+                trusted = AXIsProcessTrustedWithOptions(options)
             else:
-                options = {}
-            trusted = AXIsProcessTrustedWithOptions(options)
+                # Pass None (NULL) to just check without prompting
+                trusted = AXIsProcessTrustedWithOptions(None)
             _log(f"accessibility: trusted={trusted}, first_run={first_run}")
             if not trusted and first_run:
                 from AppKit import (
@@ -185,7 +185,8 @@ class App:
                 )
 
                 app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-        except ImportError:
+        except Exception as exc:
+            _log(f"accessibility: EXCEPTION: {exc}")
             pass
 
     def _start_services(self, first_run: bool = False) -> None:
