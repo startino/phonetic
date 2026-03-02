@@ -88,10 +88,10 @@ class App:
             _log("_run_gui: showing first-run wizard")
             self._show_first_run_wizard()
         else:
-            # Returning user — ensure mic permission while still foreground, then hide
+            # Returning user — request mic permission while still foreground, then hide
             if sys.platform == "darwin":
-                _log("_run_gui: ensuring mic permission")
-                self._ensure_mic_permission()
+                _log("_run_gui: checking mic permission")
+                self._check_mic_permission()
                 _log("_run_gui: hiding from dock")
                 self._hide_macos_dock()
             _log("_run_gui: starting services")
@@ -135,9 +135,9 @@ class App:
 
         def on_first_run_save(cfg: Config) -> None:
             self._cfg = cfg
-            # Trigger mic permission while still a foreground app, then hide
+            # Request mic permission while still a foreground app, then hide
             if sys.platform == "darwin":
-                self._ensure_mic_permission()
+                self._check_mic_permission()
                 self._hide_macos_dock()
             self._start_services()
 
@@ -271,6 +271,10 @@ class App:
                 return
 
         if not self._rec.is_recording:
+            # Check mic permission before every recording attempt
+            if not self._check_mic_permission():
+                self._show_mic_denied_dialog()
+                return
             print(f"Recording... Press {self._cfg.hotkey} to stop.")
             try:
                 self._rec.start()
@@ -405,20 +409,64 @@ class App:
 
     # --- macOS dock hiding ---
 
-    def _ensure_mic_permission(self) -> None:
-        """Trigger the macOS mic permission dialog while the app is still foreground.
+    def _check_mic_permission(self) -> bool:
+        """Check microphone authorization on macOS.
 
-        Must be called *before* _hide_macos_dock(), otherwise the system
-        permission prompt is invisible behind other windows.
+        If undetermined, triggers the system permission dialog (must be called
+        while the app is a foreground app for the dialog to be visible).
+        Returns True if authorized, False otherwise.
         """
         if sys.platform != "darwin":
-            return
+            return True
         try:
-            import sounddevice as sd
-            s = sd.InputStream(channels=1, dtype="float32")
-            s.start()
-            s.stop()
-            s.close()
+            import objc
+            objc.loadBundle(
+                "AVFoundation", {},
+                bundle_path="/System/Library/Frameworks/AVFoundation.framework",
+            )
+            AVCaptureDevice = objc.lookUpClass("AVCaptureDevice")
+            # AVMediaTypeAudio = "soun"
+            status = AVCaptureDevice.authorizationStatusForMediaType_("soun")
+            if status == 3:  # Authorized
+                return True
+            if status == 0:  # Not determined — request access (shows system dialog)
+                event = threading.Event()
+                granted_box: list[bool] = [False]
+
+                def _handler(granted: bool) -> None:
+                    granted_box[0] = granted
+                    event.set()
+
+                AVCaptureDevice.requestAccessForMediaType_completionHandler_(
+                    "soun", _handler,
+                )
+                event.wait(timeout=60)
+                return granted_box[0]
+            # Denied (2) or Restricted (1)
+            return False
+        except Exception:
+            # AVFoundation unavailable — assume OK and let sounddevice handle it
+            return True
+
+    def _show_mic_denied_dialog(self) -> None:
+        """Show a dialog telling the user to enable mic permission in System Settings."""
+        try:
+            from AppKit import (
+                NSApplication,
+                NSApplicationActivationPolicyRegular,
+                NSApplicationActivationPolicyAccessory,
+            )
+            app = NSApplication.sharedApplication()
+            app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+            from tkinter import messagebox
+            messagebox.showwarning(
+                "Phonetic — Microphone Required",
+                "Phonetic needs microphone access to record audio.\n\n"
+                "1. Open System Settings \u2192 Privacy & Security \u2192 Microphone\n"
+                "2. Find Phonetic and toggle it ON\n"
+                "3. Try recording again",
+            )
+            app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         except Exception:
             pass
 
