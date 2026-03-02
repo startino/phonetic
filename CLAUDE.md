@@ -53,16 +53,17 @@
 
 ### Nuclear cleanup (run before EVERY install test)
 ```bash
+# FIRST: detach all DMG volumes (stale mounts cause wrong binary installs)
+hdiutil detach /Volumes/Phonetic 2>/dev/null; hdiutil detach "/Volumes/Phonetic 1" 2>/dev/null; hdiutil detach "/Volumes/Phonetic 2" 2>/dev/null
 pkill -9 -f "phonetic" 2>/dev/null; pkill -9 -f "Phonetic" 2>/dev/null
 rm -rf ~/Applications/Phonetic.app /Applications/Phonetic.app
-rm -rf ~/Library/Application\ Support/Phonetic ~/.config/phonetic
+rm -rf "$HOME/Library/Application Support/Phonetic" ~/.config/phonetic
 rm -f ~/Library/Preferences/no.starti.phonetic.plist ~/Library/Preferences/com.startino.phonetic.plist
 rm -f ~/Library/LaunchAgents/no.starti.phonetic.plist ~/Library/LaunchAgents/com.startino.phonetic.plist
-rm -f ~/Library/Application\ Support/CrashReporter/phonetic_*.plist
+rm -rf "$HOME/Library/Application Support/CrashReporter/"phonetic_*
 rm -f ~/Library/Logs/DiagnosticReports/phonetic-*.ips
 rm -f /tmp/phonetic_startup.log /tmp/phonetic_debug.wav
 rm -f ~/Downloads/Phonetic.dmg ~/Downloads/Phonetic.zip 2>/dev/null
-hdiutil detach /Volumes/Phonetic 2>/dev/null; hdiutil detach "/Volumes/Phonetic 1" 2>/dev/null; hdiutil detach "/Volumes/Phonetic 2" 2>/dev/null
 defaults delete com.apple.dock recent-apps 2>/dev/null; killall Dock 2>/dev/null
 tccutil reset Microphone no.starti.phonetic 2>/dev/null; tccutil reset Accessibility no.starti.phonetic 2>/dev/null
 tccutil reset Microphone com.startino.phonetic 2>/dev/null; tccutil reset Accessibility com.startino.phonetic 2>/dev/null
