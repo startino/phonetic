@@ -47,6 +47,7 @@
 - **Save intermediate artifacts**: For audio/binary pipelines, write intermediate outputs to /tmp (e.g. `/tmp/phonetic_debug.wav`) so they can be inspected independently
 - **Log at each stage**: When data flows through multiple stages (record → encode → API → response), log the shape/size/key properties at each boundary to find where it degrades
 - **Test the fix**: After applying a fix, actually run it and confirm the output changed, don't just assume
+- **Never remove logs**: Keep all `log()` calls in the codebase permanently. Add as many as possible — they are essential for diagnosing issues in bundled app builds where stderr is invisible. More instrumentation = fewer debug cycles
 
 ## macOS Install Testing
 
@@ -78,6 +79,18 @@ cp -R "/Volumes/Phonetic/Phonetic.app" ~/Applications/
 xattr -cr ~/Applications/Phonetic.app
 open ~/Applications/Phonetic.app
 ```
+
+## macOS Known Issues
+- **Bundle ID**: `no.starti.phonetic`
+- **Sequoia com.apple.provenance**: Immutable xattr on /Applications apps, blocks unsigned dylibs. Install to ~/Applications instead.
+- **AppTranslocation**: DMG-launched apps get translocated to temp path, also blocked by dyld. Must copy out first.
+- **LSUIElement + permission dialogs**: Background/agent apps can't show system permission dialogs. Must set NSApplicationActivationPolicyRegular + activateIgnoringOtherApps_ before requesting.
+- **tkinter before AppKit**: Must init tk.Tk() BEFORE calling NSApplication.setActivationPolicy_ or Tk crashes with GetRGBA unrecognized selector.
+- **PyObjC block signatures**: `requestAccessForMediaType_completionHandler_` fails with "Argument 3 is a block, but no signature available". Fix: use `objc.registerMetaDataForSelector` to register the block type info before calling.
+- **sounddevice doesn't trigger TCC**: Opening a sounddevice InputStream does NOT trigger the macOS mic permission dialog for bundled apps. Must use AVFoundation API directly.
+- **pynput Listener crashes on macOS Sequoia**: Creating a `keyboard.Listener` (or `GlobalHotKeys`) from a background thread crashes with `dispatch_assert_queue_fail` in `TSMGetInputSourceProperty`. Only create listeners once at startup; never stop + recreate.
+- **Option key composes characters**: On macOS, Alt/Option changes the key character (e.g. Alt+R → ®). pynput's `GlobalHotKeys` can't match these. Use virtual keycode-based matching instead.
+- **tkinter keycode encoding**: On macOS, `event.keycode` encodes the virtual keycode in bits 24-31. Extract with `(event.keycode >> 24) & 0xFF`.
 
 ## Dev Commands
 - `uv run phonetic` — GUI mode
