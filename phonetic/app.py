@@ -198,10 +198,16 @@ class App:
         except Exception as exc:
             _log(f"accessibility_interactive: foreground failed: {exc}")
 
-        # Open System Settings to the Accessibility pane
-        import subprocess
-        _log("accessibility_interactive: opening System Settings")
-        subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+        # Request with prompt — this registers the app in the accessibility
+        # list in System Settings so the user can find and toggle it on.
+        # Without the prompt option the app may not appear in the list at all.
+        _log("accessibility_interactive: requesting with prompt (adds app to list)")
+        try:
+            AXIsProcessTrustedWithOptions({"AXTrustedCheckOptionPrompt": True})
+        except Exception as exc:
+            _log(f"accessibility_interactive: prompt request failed: {exc}")
+            import subprocess
+            subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
 
         # Block until user clicks OK
         from tkinter import messagebox
