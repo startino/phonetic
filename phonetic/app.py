@@ -425,10 +425,9 @@ class App:
     def _check_mic_permission(self) -> bool:
         """Check microphone authorization on macOS.
 
-        If undetermined, triggers the system permission dialog by briefly
-        opening an audio input stream (must be called while the app is a
-        foreground app for the dialog to be visible).
-        Returns True if authorized, False otherwise.
+        If undetermined, triggers the system permission dialog via AVFoundation
+        (must be called while the app is a foreground app for the dialog to be
+        visible). Returns True if authorized, False otherwise.
         """
         from .__main__ import _log
         if sys.platform != "darwin":
@@ -440,46 +439,59 @@ class App:
                 "AVFoundation", {},
                 bundle_path="/System/Library/Frameworks/AVFoundation.framework",
             )
+
+            # Register block signature so PyObjC knows how to call the completion handler
+            objc.registerMetaDataForSelector(
+                b"AVCaptureDevice",
+                b"requestAccessForMediaType:completionHandler:",
+                {
+                    "arguments": {
+                        3: {
+                            "callable": {
+                                "retval": {"type": b"v"},
+                                "arguments": {
+                                    0: {"type": b"^v"},
+                                    1: {"type": b"Z"},
+                                },
+                            }
+                        }
+                    }
+                },
+            )
+
             AVCaptureDevice = objc.lookUpClass("AVCaptureDevice")
             status = AVCaptureDevice.authorizationStatusForMediaType_("soun")
             _log(f"mic_perm: status = {status} (0=notDetermined, 1=restricted, 2=denied, 3=authorized)")
             if status == 3:  # Authorized
                 return True
             if status == 0:  # Not determined — trigger the system dialog
-                _log("mic_perm: not determined, becoming foreground app to trigger dialog")
-                try:
-                    from AppKit import (
-                        NSApplication,
-                        NSApplicationActivationPolicyRegular,
-                    )
-                    app = NSApplication.sharedApplication()
-                    app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
-                    app.activateIgnoringOtherApps_(True)
-                    _log("mic_perm: set to foreground, opening audio stream")
+                _log("mic_perm: not determined, becoming foreground app")
+                from AppKit import (
+                    NSApplication,
+                    NSApplicationActivationPolicyRegular,
+                )
+                app = NSApplication.sharedApplication()
+                app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+                app.activateIgnoringOtherApps_(True)
 
-                    import sounddevice as sd
-                    # Opening an input stream triggers the macOS mic permission dialog.
-                    stream = sd.InputStream(samplerate=16000, channels=1, blocksize=1024)
-                    stream.start()
-                    _log("mic_perm: stream opened, waiting for user to respond to dialog")
-                    # Poll until status changes from 0 (notDetermined)
-                    import time
-                    for _ in range(120):  # up to 60 seconds
-                        time.sleep(0.5)
-                        new_status = AVCaptureDevice.authorizationStatusForMediaType_("soun")
-                        if new_status != 0:
-                            _log(f"mic_perm: user responded, new status = {new_status}")
-                            break
-                    stream.stop()
-                    stream.close()
-                    final = AVCaptureDevice.authorizationStatusForMediaType_("soun")
-                    _log(f"mic_perm: final status = {final}")
-                    return final == 3
-                except Exception as exc2:
-                    _log(f"mic_perm: stream trigger EXCEPTION: {exc2}")
-                    return False
+                _log("mic_perm: requesting access via AVCaptureDevice")
+                event = threading.Event()
+                granted_box: list[bool] = [False]
+
+                def _handler(granted: bool) -> None:
+                    _log(f"mic_perm: handler called, granted={granted}")
+                    granted_box[0] = granted
+                    event.set()
+
+                AVCaptureDevice.requestAccessForMediaType_completionHandler_(
+                    "soun", _handler,
+                )
+                _log("mic_perm: waiting for user response")
+                event.wait(timeout=120)
+                _log(f"mic_perm: result = {granted_box[0]}")
+                return granted_box[0]
             # Denied (2) or Restricted (1)
-            _log(f"mic_perm: denied/restricted, returning False")
+            _log("mic_perm: denied/restricted, returning False")
             return False
         except Exception as exc:
             _log(f"mic_perm: EXCEPTION: {exc}")
