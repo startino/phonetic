@@ -5,7 +5,7 @@
 - **Entry point**: `phonetic.__main__:main` (defined in `pyproject.toml [project.scripts]`)
 - **Backward compat**: `main.py` is a shim that imports from `phonetic.__main__`
 - **Modes**: GUI (tray icon via pystray + customtkinter settings) and headless (`--headless` or no display)
-- **Threading**: Main thread = customtkinter mainloop, tray = daemon thread, hotkeys = pynput daemon thread, transcription = worker threads
+- **Threading**: Main thread = customtkinter mainloop, tray = daemon thread, hotkeys = Carbon event handler (macOS) / pynput daemon thread (Linux/Windows), transcription = worker threads
 - **Message queue**: `App._msg_queue` polled via `root.after(100, ...)` in GUI mode
 
 ## Key Modules
@@ -122,7 +122,7 @@ open ~/Applications/Phonetic.app
 - **Option key composes characters**: On macOS, Alt/Option changes the key character (e.g. Alt+R → ®). pynput's `GlobalHotKeys` can't match these. Use virtual keycode-based matching instead.
 - **tkinter keycode encoding**: On macOS, `event.keycode` encodes the virtual keycode in bits 24-31. Extract with `(event.keycode >> 24) & 0xFF`.
 - **pynput CGEventTap needs Input Monitoring**: pynput uses CGEventTap which requires Input Monitoring (not Accessibility) TCC permission. Ad-hoc signed apps can't programmatically request this — the app never appears in System Settings for the user to toggle.
-- **Carbon RegisterEventHotKey needs NO permissions**: Replaced pynput with quickmachotkey (Carbon HIToolbox) on macOS in v0.5.55. Deprecated API but only permission-free approach. Untested on Tahoe (26.3) as of v0.5.56.
+- **Carbon RegisterEventHotKey needs NO permissions**: Replaced pynput with quickmachotkey (Carbon HIToolbox) on macOS in v0.5.55. Deprecated API but only permission-free approach. Confirmed working on Tahoe (26.3) in v0.5.57.
 
 ## Dev Commands
 - `uv run phonetic` — GUI mode
