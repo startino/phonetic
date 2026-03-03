@@ -55,7 +55,7 @@
 ### Nuclear cleanup (run before EVERY install test)
 ```bash
 # FIRST: detach all DMG volumes (stale mounts cause wrong binary installs)
-hdiutil detach /Volumes/Phonetic 2>/dev/null; hdiutil detach "/Volumes/Phonetic 1" 2>/dev/null; hdiutil detach "/Volumes/Phonetic 2" 2>/dev/null
+hdiutil detach /Volumes/Phonetic 2>/dev/null; hdiutil detach "/Volumes/Phonetic 1" 2>/dev/null; hdiutil detach "/Volumes/Phonetic 2" 2>/dev/null; hdiutil detach "/Volumes/Phonetic 3" 2>/dev/null
 pkill -9 -f "phonetic" 2>/dev/null; pkill -9 -f "Phonetic" 2>/dev/null
 rm -rf ~/Applications/Phonetic.app /Applications/Phonetic.app
 rm -rf ~/"Library/Application Support/Phonetic" ~/.config/phonetic
@@ -68,8 +68,25 @@ rm -f ~/Downloads/Phonetic.dmg ~/Downloads/Phonetic.zip 2>/dev/null
 defaults delete com.apple.dock recent-apps 2>/dev/null; killall Dock 2>/dev/null
 tccutil reset Microphone no.starti.phonetic 2>/dev/null; tccutil reset Accessibility no.starti.phonetic 2>/dev/null
 tccutil reset Microphone com.startino.phonetic 2>/dev/null; tccutil reset Accessibility com.startino.phonetic 2>/dev/null
-# Verify — nothing should remain outside source repo, uv cache, and claude memory
-find ~ /tmp -name "*phonetic*" -o -name "*Phonetic*" 2>/dev/null | grep -v "/vcs/" | grep -v "/.cache/uv/" | grep -v "/.claude/"
+
+# Purge LaunchServices ghost entries (old DMG/dev builds show as duplicate apps in Launchpad/Spotlight)
+LSREG=/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister
+"$LSREG" -u /Applications/Phonetic.app 2>/dev/null
+"$LSREG" -u ~/Applications/Phonetic.app 2>/dev/null
+"$LSREG" -u /Volumes/Phonetic/Phonetic.app 2>/dev/null
+"$LSREG" -u "/Volumes/Phonetic 1/Phonetic.app" 2>/dev/null
+"$LSREG" -u "/Volumes/Phonetic 2/Phonetic.app" 2>/dev/null
+"$LSREG" -u "/Volumes/Phonetic 3/Phonetic.app" 2>/dev/null
+"$LSREG" -u ~/vcs/startino/phonetic/dist/Phonetic.app 2>/dev/null
+# Reset Launchpad to remove ghost icons
+defaults write com.apple.dock ResetLaunchPad -bool true; killall Dock 2>/dev/null
+
+# Verify — nothing should remain outside source repo, uv cache, and claude dirs
+find ~ /tmp -name "*phonetic*" -o -name "*Phonetic*" 2>/dev/null | grep -v "/vcs/" | grep -v "/.cache/uv/" | grep -v "/.claude/" | grep -v "/claude-cli-nodejs/"
+# Verify — only Xcode simulator files should appear from /Applications
+find ~/Applications /Applications -maxdepth 1 -name "*Phonetic*" 2>/dev/null
+# Verify — LaunchServices should have zero Phonetic entries
+"$LSREG" -dump 2>/dev/null | grep -c "Phonetic"
 ```
 
 ### Install from release
@@ -79,6 +96,10 @@ hdiutil attach ~/Downloads/Phonetic.dmg -nobrowse
 mkdir -p ~/Applications
 cp -R "/Volumes/Phonetic/Phonetic.app" ~/Applications/
 xattr -cr ~/Applications/Phonetic.app
+hdiutil detach /Volumes/Phonetic
+# Re-register in LaunchServices so Spotlight/Launchpad find it
+LSREG=/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister
+"$LSREG" -f ~/Applications/Phonetic.app
 open ~/Applications/Phonetic.app
 ```
 
@@ -86,8 +107,10 @@ open ~/Applications/Phonetic.app
 - **Always install to `~/Applications/`** — never `/Applications/`
 - `/Applications/` on Sequoia has `com.apple.provenance` xattr that blocks unsigned dylibs
 - Opening a DMG can cause Finder to copy to `/Applications/` via drag — always check BOTH locations after install
-- After nuclear cleanup, verify with: `find ~/Applications /Applications -name "*Phonetic*"` — there should be exactly one
+- After nuclear cleanup, verify with: `find ~/Applications /Applications -maxdepth 1 -name "*Phonetic*"` — there should be exactly one
 - DMG mounts at `/Volumes/Phonetic` persist after install — always detach before re-installing
+- **LaunchServices ghost entries**: Opening Phonetic.app from a DMG, `/Applications/`, or `dist/` registers it in macOS LaunchServices DB. Even after deleting the .app, the ghost shows in Launchpad/Spotlight as a second "Phonetic". Fix: `lsregister -u <stale-path>` then `defaults write com.apple.dock ResetLaunchPad -bool true; killall Dock`. The nuclear cleanup script handles this.
+- **Old bundle ID**: Builds before ~v0.5.20 used `com.startino.phonetic`. Current is `no.starti.phonetic`. Both must be cleaned from TCC, prefs, and LaunchServices.
 
 ## macOS Known Issues
 - **Bundle ID**: `no.starti.phonetic`
