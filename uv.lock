@@ -260,7 +260,7 @@ wheels = [
 
 [[package]]
 name = "phonetic"
-version = "0.5.34"
+version = "0.5.57"
 source = { editable = "." }
 dependencies = [
     { name = "customtkinter" },
@@ -274,6 +274,7 @@ dependencies = [
     { name = "pyperclip", marker = "sys_platform != 'linux'" },
     { name = "pystray" },
     { name = "python-dotenv" },
+    { name = "quickmachotkey", marker = "sys_platform == 'darwin'" },
     { name = "sounddevice" },
     { name = "soundfile" },
 ]
@@ -297,6 +298,7 @@ requires-dist = [
     { name = "pyperclip", marker = "sys_platform != 'linux'" },
     { name = "pystray" },
     { name = "python-dotenv" },
+    { name = "quickmachotkey", marker = "sys_platform == 'darwin'" },
     { name = "sounddevice" },
     { name = "soundfile" },
 ]
@@ -571,6 +573,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/85/9f/01a1a99704853cb63f253eea009390c88e7131c67e66a0a02099a8c917cb/pywin32-ctypes-0.2.3.tar.gz", hash = "sha256:d162dc04946d704503b2edc4d55f3dba5c1d539ead017afa00142c38b9885755", size = 29471, upload-time = "2024-08-14T10:15:34.626Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/de/3d/8161f7711c017e01ac9f008dfddd9410dff3674334c233bde66e7ba65bbf/pywin32_ctypes-0.2.3-py3-none-any.whl", hash = "sha256:8a1513379d709975552d202d942d9837758905c8d01eb82b8bcc30918929e7b8", size = 30756, upload-time = "2024-08-14T10:15:33.187Z" },
+]
+
+[[package]]
+name = "quickmachotkey"
+version = "2025.7.28"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b6/f5/3de969ae98db8f438487d6987587ae3032f5b894f7e28af3114954c9b503/quickmachotkey-2025.7.28.tar.gz", hash = "sha256:7290908a150ca884f301a0b2490690309cd5857e836e97c7d9f6c9e6f74b8f13", size = 8988, upload-time = "2025-07-29T00:15:22.119Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bf/ba/9e60662622190296b46dda4b676c31a3d19b3c8f930444f9b68e43fa3f8c/quickmachotkey-2025.7.28-py3-none-any.whl", hash = "sha256:bee42c752691add6aec4d6c6a044ef6fe1a6ced7e8b7308992f03d7c0fdc22cc", size = 9891, upload-time = "2025-07-29T00:15:21.011Z" },
 ]
 
 [[package]]
