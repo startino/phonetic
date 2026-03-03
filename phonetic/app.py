@@ -343,16 +343,17 @@ class App:
                 self._notify("No audio captured", "critical", replace=True)
                 return
 
-            # Warn if audio is silent (common with wrong device or missing permissions)
+            # Abort if audio is silent (wrong device, missing permissions, muted mic)
             peak = float(np.max(np.abs(audio)))
             _log(f"toggle_recording: peak={peak:.6f}, duration={audio.shape[0]/self._rec.sample_rate:.2f}s")
             if peak < 0.001:
                 if sys.platform == "darwin":
-                    print("Warning: Audio appears silent. Check microphone permissions in "
-                          "System Settings > Privacy & Security > Microphone.", file=sys.stderr)
+                    msg = "No audio detected — check microphone permissions in System Settings"
                 else:
-                    print("Warning: Audio appears silent. Check that your microphone is "
-                          "not muted and is set as the default input device.", file=sys.stderr)
+                    msg = "No audio detected — check that your mic is not muted"
+                print(msg, file=sys.stderr)
+                self._notify(msg, "critical", replace=True)
+                return
 
             duration = audio.shape[0] / self._rec.sample_rate
             if duration < MIN_DURATION_SECS:
