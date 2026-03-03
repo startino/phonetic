@@ -33,34 +33,43 @@ def list_input_devices() -> list[dict]:
     return devices
 
 
-def _try_open(device: Optional[int], label: str) -> bool:
-    """Try opening a brief InputStream to validate the device works."""
-    try:
-        s = sd.InputStream(device=device, channels=1, dtype="float32")
-        s.close()
-        return True
-    except Exception as e:
-        print(f"[audio] {label} device {device} failed probe: {e}")
-        return False
+def _find_alsa_pipewire_device() -> Optional[int]:
+    """Find the ALSA device named 'pipewire' or 'default'.
+
+    On PipeWire systems, these ALSA virtual devices route through PipeWire's
+    ALSA plugin to the correct default source.  This is more reliable than
+    JACK, which exposes monitor/loopback ports for every device (including
+    Bluetooth output-only sinks) as fake input devices.
+    """
+    apis = sd.query_hostapis()
+    for api in apis:
+        if "alsa" not in api["name"].lower():
+            continue
+        for dev_idx in api.get("devices", []):
+            dev = sd.query_devices(dev_idx)
+            if dev["max_input_channels"] <= 0:
+                continue
+            name = dev["name"].lower()
+            if name == "pipewire":
+                return dev_idx
+        # No 'pipewire' device; try 'default'
+        idx = api["default_input_device"]
+        if idx >= 0:
+            return idx
+    return None
 
 
 def detect_audio() -> tuple[int, int, Optional[int]]:
     """Return (sample_rate, channels, device_index) from the default input device.
 
-    On Linux with PipeWire, tries in order:
+    On Linux, tries in order:
       1. PulseAudio host API (pipewire-pulse)
-      2. JACK host API (pipewire-jack) — matched by PipeWire default source name
-    Falls back to the system default on all platforms.
-
-    Every candidate is probe-opened before being returned so that transient
-    device errors (e.g. Bluetooth not in capture mode) are caught early.
+      2. ALSA 'pipewire' or 'default' device (PipeWire ALSA plugin — most
+         reliable when PortAudio lacks a PulseAudio backend, e.g. nixpkgs)
+      3. System default (``device=None``)
     """
     try:
         if sys.platform.startswith("linux"):
-            pw_name = _pipewire_default_source()
-            if pw_name:
-                print(f"PipeWire default source: {pw_name}")
-
             apis = sd.query_hostapis()
             api_names = [a["name"] for a in apis]
             print(f"[audio] Available host APIs: {api_names}")
@@ -70,39 +79,23 @@ def detect_audio() -> tuple[int, int, Optional[int]]:
                 if "pulse" not in api["name"].lower():
                     continue
                 idx = api["default_input_device"]
-                if idx >= 0 and _try_open(idx, "PulseAudio"):
+                if idx >= 0:
                     dev = sd.query_devices(idx)
                     print(f"Audio device: {dev['name']} (PulseAudio)")
                     return int(dev["default_samplerate"]), 1, idx
 
-            # 2. Try JACK — PipeWire exposes devices here when PulseAudio
-            #    backend is unavailable (e.g. nix PortAudio without pulse)
-            for api_idx, api in enumerate(apis):
-                if "jack" not in api["name"].lower():
-                    continue
-                # If we know the PipeWire default source, find it by name
-                if pw_name:
-                    for dev_idx in api.get("devices", []):
-                        dev = sd.query_devices(dev_idx)
-                        if dev["max_input_channels"] <= 0:
-                            continue
-                        if pw_name.lower() in dev["name"].lower():
-                            if _try_open(dev_idx, "JACK/PipeWire"):
-                                print(f"Audio device: {dev['name']} (JACK/PipeWire)")
-                                return int(dev["default_samplerate"]), 1, dev_idx
-                # Otherwise use JACK's default input
-                idx = api["default_input_device"]
-                if idx >= 0 and _try_open(idx, "JACK"):
-                    dev = sd.query_devices(idx)
-                    print(f"Audio device: {dev['name']} (JACK)")
-                    return int(dev["default_samplerate"]), 1, idx
+            # 2. Try ALSA pipewire/default — routes through PipeWire on
+            #    modern Linux, avoids JACK's unreliable loopback ports
+            alsa_idx = _find_alsa_pipewire_device()
+            if alsa_idx is not None:
+                dev = sd.query_devices(alsa_idx)
+                print(f"Audio device: {dev['name']} (ALSA/PipeWire)")
+                return int(dev["default_samplerate"]), 1, alsa_idx
 
         # Fallback: system default (CoreAudio on macOS, WASAPI on Windows,
         # ALSA on Linux when PulseAudio/JACK are unavailable)
         dev = sd.query_devices(kind="input")
-        if _try_open(None, "fallback"):
-            print(f"Audio device: {dev['name']} (fallback)")
-            return int(dev["default_samplerate"]), 1, None
-        raise RuntimeError("system default device failed to open")
+        print(f"Audio device: {dev['name']} (fallback)")
+        return int(dev["default_samplerate"]), 1, None
     except Exception as e:
         raise RuntimeError(f"No audio input device found: {e}") from e
