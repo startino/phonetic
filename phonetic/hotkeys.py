@@ -142,24 +142,43 @@ class _CarbonHotkeyManager:
         self._on_toggle = on_toggle
         self._hotkey_ref = None
         self._handler_ref = None
+        self._timer_ref = None
         self._required_mods, self._target_vk = _parse_hotkey(hotkey)
+        self._callback_fire_count = 0
+        self._heartbeat_count = 0
 
     def start(self) -> None:
         from .log import log
+        import threading
+
+        log(f"carbon_hotkey: start() called on thread={threading.current_thread().name} id={threading.get_ident()}")
 
         if self._target_vk is None:
-            log("carbon_hotkey: no virtual key found, cannot register")
+            log("carbon_hotkey: ERROR — no virtual key found after parsing, cannot register")
+            log(f"carbon_hotkey:   hotkey string was: {self._hotkey!r}")
+            log(f"carbon_hotkey:   parsed mods={self._required_mods}, vk={self._target_vk}")
             return
 
         # Build Carbon modifier mask
         modifier_mask = 0
         for mod in self._required_mods:
-            modifier_mask |= _MOD_TO_CARBON.get(mod, 0)
+            val = _MOD_TO_CARBON.get(mod, 0)
+            log(f"carbon_hotkey: modifier {mod!r} → Carbon mask {val}")
+            modifier_mask |= val
 
-        log(f"carbon_hotkey: registering vk={self._target_vk} modifiers={modifier_mask} (mods={self._required_mods})")
+        log(f"carbon_hotkey: will register vk={self._target_vk} (0x{self._target_vk:02x}) modifier_mask={modifier_mask} (0x{modifier_mask:04x})")
+        log(f"carbon_hotkey:   human-readable: mods={self._required_mods}, hotkey={self._hotkey!r}")
 
         try:
+            log("carbon_hotkey: importing quickmachotkey...")
+            import quickmachotkey
+            qmh_version = getattr(quickmachotkey, "__version__", "unknown")
+            log(f"carbon_hotkey: quickmachotkey version={qmh_version}")
+            log(f"carbon_hotkey: quickmachotkey path={quickmachotkey.__file__}")
+
             import objc
+            log(f"carbon_hotkey: objc (PyObjC) version={getattr(objc, '__version__', 'unknown')}")
+
             from quickmachotkey._MinimalHIToolbox import (
                 EventTypeSpec,
                 GetEventDispatcherTarget,
@@ -171,80 +190,151 @@ class _CarbonHotkeyManager:
                 kEventParamDirectObject,
                 typeEventHotKeyID,
             )
+            log("carbon_hotkey: all HIToolbox imports succeeded")
+
             from struct import unpack
 
             # Unique signature for our hotkey events
             PHON = unpack("@I", b"PHON")[0]
             HOT_KEY_ID = 1
+            log(f"carbon_hotkey: PHON signature=0x{PHON:08x}, HOT_KEY_ID={HOT_KEY_ID}")
+
+            dispatcher_target = GetEventDispatcherTarget()
+            log(f"carbon_hotkey: GetEventDispatcherTarget() → {dispatcher_target!r}")
 
             on_toggle = self._on_toggle
+            manager_self = self  # prevent closure over `self` which could be ambiguous
 
             @objc.callbackFor(InstallEventHandler)
             def _carbon_callback(callref, event, void):
                 try:
+                    manager_self._callback_fire_count += 1
+                    count = manager_self._callback_fire_count
+                    log(f"carbon_hotkey: _carbon_callback ENTERED (fire #{count})")
+                    log(f"carbon_hotkey:   callref={callref!r} event={event!r}")
+                    log(f"carbon_hotkey:   thread={threading.current_thread().name} id={threading.get_ident()}")
+
                     result, actualType, actualSize, param = GetEventParameter(
                         event, kEventParamDirectObject, typeEventHotKeyID,
                         None, 8, None, None,
                     )
+                    log(f"carbon_hotkey:   GetEventParameter result={result} actualType={actualType!r} actualSize={actualSize} param_bytes={param!r}")
+
                     sig, hkid = unpack("@II", param)
+                    log(f"carbon_hotkey:   decoded sig=0x{sig:08x} hkid={hkid}")
+                    log(f"carbon_hotkey:   expected sig=0x{PHON:08x} hkid={HOT_KEY_ID}")
+
                     if sig == PHON and hkid == HOT_KEY_ID:
-                        log("carbon_hotkey: hotkey FIRED")
+                        log("carbon_hotkey: *** HOTKEY FIRED — calling on_toggle ***")
                         on_toggle()
+                        log("carbon_hotkey: on_toggle returned")
+                    else:
+                        log(f"carbon_hotkey: sig/hkid MISMATCH, ignoring event")
                 except Exception as exc:
-                    log(f"carbon_hotkey: callback error: {exc}")
+                    log(f"carbon_hotkey: EXCEPTION in callback: {exc}")
+                    import traceback
+                    log(f"carbon_hotkey: callback traceback: {traceback.format_exc()}")
                 return 0
 
             hotkey_spec = EventTypeSpec(
                 eventClass=kEventClassKeyboard,
                 eventKind=kEventHotKeyPressed,
             )
+            log(f"carbon_hotkey: EventTypeSpec(eventClass={kEventClassKeyboard}, eventKind={kEventHotKeyPressed})")
 
             result, handler_ref = InstallEventHandler(
-                GetEventDispatcherTarget(), _carbon_callback,
+                dispatcher_target, _carbon_callback,
                 1, [hotkey_spec], None, None,
             )
-            log(f"carbon_hotkey: InstallEventHandler result={result}")
+            log(f"carbon_hotkey: InstallEventHandler result={result} handler_ref={handler_ref!r}")
             if result != 0:
-                log(f"carbon_hotkey: FAILED to install event handler (result={result})")
+                log(f"carbon_hotkey: FAILED to install event handler (OSStatus={result})")
+                log(f"carbon_hotkey:   -9874=eventNotHandledErr, -50=paramErr, see CarbonCore/MacErrors.h")
                 return
             self._handler_ref = handler_ref
 
             hotkey_id = (PHON, HOT_KEY_ID)
+            log(f"carbon_hotkey: calling RegisterEventHotKey(vk={self._target_vk}, mods=0x{modifier_mask:04x}, id=({PHON:#x},{HOT_KEY_ID}), target={dispatcher_target!r}, options=0)")
             result, hotkey_ref = RegisterEventHotKey(
                 self._target_vk, modifier_mask, hotkey_id,
-                GetEventDispatcherTarget(), 0, None,
+                dispatcher_target, 0, None,
             )
-            log(f"carbon_hotkey: RegisterEventHotKey result={result}")
+            log(f"carbon_hotkey: RegisterEventHotKey result={result} hotkey_ref={hotkey_ref!r}")
             if result != 0:
-                log(f"carbon_hotkey: FAILED to register hotkey (result={result})")
+                log(f"carbon_hotkey: FAILED to register hotkey (OSStatus={result})")
+                log(f"carbon_hotkey:   common: -9874=eventNotHandledErr, -50=paramErr, -9870=eventInternalErr")
                 return
             self._hotkey_ref = hotkey_ref
 
-            # prevent callback from being garbage collected
+            # Prevent callback from being garbage collected
             self._callback = _carbon_callback
+            log(f"carbon_hotkey: callback stored at id={id(_carbon_callback):#x}")
 
-            log("carbon_hotkey: successfully registered")
+            log("carbon_hotkey: === REGISTRATION COMPLETE ===")
+            log(f"carbon_hotkey:   hotkey_ref={hotkey_ref!r}")
+            log(f"carbon_hotkey:   handler_ref={handler_ref!r}")
+            log(f"carbon_hotkey:   hotkey={self._hotkey!r}, vk={self._target_vk}, mods={self._required_mods}")
+            log(f"carbon_hotkey:   waiting for hotkey press events...")
+
+            # --- Install a Carbon event-loop heartbeat timer ---
+            # Fires every 10 seconds to confirm Carbon events are being dispatched.
+            # If the heartbeat stops, the Carbon event loop isn't running.
+            self._install_heartbeat_timer(log)
 
         except Exception as exc:
             log(f"carbon_hotkey: EXCEPTION during setup: {exc}")
             import traceback
             log(f"carbon_hotkey: traceback: {traceback.format_exc()}")
 
+    def _install_heartbeat_timer(self, log) -> None:
+        """Install a repeating timer via tkinter to confirm the event loop is alive."""
+        import threading
+
+        def _heartbeat():
+            self._heartbeat_count += 1
+            log(f"carbon_hotkey: HEARTBEAT #{self._heartbeat_count} — event loop alive, "
+                f"callback_fires={self._callback_fire_count}, "
+                f"thread={threading.current_thread().name} id={threading.get_ident()}, "
+                f"hotkey_ref={self._hotkey_ref!r}, handler_ref={self._handler_ref!r}")
+            # Reschedule via threading.Timer as a fallback
+            # (doesn't prove Carbon events work, but proves Python is alive)
+            t = threading.Timer(10.0, _heartbeat)
+            t.daemon = True
+            t.start()
+            self._timer_ref = t
+
+        # First heartbeat after 5 seconds
+        t = threading.Timer(5.0, _heartbeat)
+        t.daemon = True
+        t.start()
+        self._timer_ref = t
+        log("carbon_hotkey: heartbeat timer installed (5s initial, 10s repeat)")
+
     def stop(self) -> None:
         from .log import log
+        log(f"carbon_hotkey: stop() called, hotkey_ref={self._hotkey_ref!r}, total_fires={self._callback_fire_count}")
+        if self._timer_ref is not None:
+            self._timer_ref.cancel()
+            self._timer_ref = None
+            log("carbon_hotkey: heartbeat timer cancelled")
         if self._hotkey_ref is not None:
             try:
                 from quickmachotkey._MinimalHIToolbox import UnregisterEventHotKey
                 UnregisterEventHotKey(self._hotkey_ref)
-                log("carbon_hotkey: unregistered")
+                log("carbon_hotkey: unregistered successfully")
             except Exception as exc:
                 log(f"carbon_hotkey: unregister error: {exc}")
             self._hotkey_ref = None
+        else:
+            log("carbon_hotkey: stop() — no hotkey_ref to unregister")
 
     def update_hotkey(self, new_hotkey: str) -> None:
         """Update the hotkey — requires stop/start cycle."""
+        from .log import log
+        log(f"carbon_hotkey: update_hotkey({new_hotkey!r}) — old was {self._hotkey!r}")
         self._hotkey = new_hotkey
         self._required_mods, self._target_vk = _parse_hotkey(new_hotkey)
+        log(f"carbon_hotkey: after update: mods={self._required_mods} vk={self._target_vk}")
 
 
 class _PynputHotkeyManager(_PidFileMixin):
@@ -347,18 +437,28 @@ def HotkeyManager(hotkey: str, on_toggle: Callable[[], None]):
     - Wayland or pynput unavailable: _SignalOnlyHotkeyManager (SIGUSR1 only)
     """
     from .log import log
+    import threading
+
+    log(f"HotkeyManager factory: hotkey={hotkey!r} platform={sys.platform} thread={threading.current_thread().name}")
 
     if sys.platform == "darwin":
         try:
-            log("HotkeyManager: trying Carbon (no permissions needed)")
-            return _CarbonHotkeyManager(hotkey, on_toggle)
+            log("HotkeyManager: creating _CarbonHotkeyManager (no permissions needed)")
+            mgr = _CarbonHotkeyManager(hotkey, on_toggle)
+            log(f"HotkeyManager: Carbon manager created, id={id(mgr):#x}")
+            return mgr
         except Exception as exc:
-            log(f"HotkeyManager: Carbon failed: {exc}, falling back to pynput")
+            log(f"HotkeyManager: Carbon FAILED: {exc}, falling back to pynput")
+            import traceback
+            log(f"HotkeyManager: traceback: {traceback.format_exc()}")
 
     if sys.platform.startswith("linux") and _is_wayland():
+        log("HotkeyManager: Wayland detected, using SignalOnly")
         return _SignalOnlyHotkeyManager(hotkey, on_toggle)
 
     if _load_pynput() is None:
+        log(f"HotkeyManager: pynput unavailable ({_pynput_error}), using SignalOnly")
         return _SignalOnlyHotkeyManager(hotkey, on_toggle)
 
+    log("HotkeyManager: using _PynputHotkeyManager")
     return _PynputHotkeyManager(hotkey, on_toggle)

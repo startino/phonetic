@@ -36,6 +36,8 @@ class App:
         self._hotkeys: Optional[HotkeyManager] = None
         self._root: Optional[object] = None  # tk.Tk when in GUI mode
         self._settings_win = None  # SettingsWindow ref for hotkey routing
+        self._poll_count = 0  # message poll counter for heartbeat logging
+        self._msg_count = 0  # total messages processed
 
     def run(self) -> None:
         """Main entry point."""
@@ -105,9 +107,11 @@ class App:
             self._start_services()
 
         # Start message queue polling
-        _log("_run_gui: entering mainloop")
+        _log(f"_run_gui: scheduling first poll, thread={threading.current_thread().name} id={threading.get_ident()}")
         self._root.after(100, self._poll_messages)
+        _log("_run_gui: entering mainloop NOW")
         self._root.mainloop()
+        _log("_run_gui: mainloop exited")
 
         # Cleanup
         self._shutdown()
@@ -146,23 +150,33 @@ class App:
         # path (before mainloop) which avoids the TSM crash on Sequoia.
         _log(f"first_run_wizard: starting early hotkey listener for {stub_cfg.hotkey!r}")
 
+        def _on_hotkey_toggle_firstrun():
+            _log(f"on_hotkey_toggle_firstrun: FIRED on thread={threading.current_thread().name} id={threading.get_ident()}")
+            _log(f"on_hotkey_toggle_firstrun: putting toggle_recording in queue (qsize before={self._msg_queue.qsize()})")
+            self._msg_queue.put(("toggle_recording",))
+            _log(f"on_hotkey_toggle_firstrun: queued (qsize after={self._msg_queue.qsize()})")
+
         self._hotkeys = HotkeyManager(
             stub_cfg.hotkey,
-            on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
+            on_toggle=_on_hotkey_toggle_firstrun,
         )
         self._hotkeys.start()
-        _log(f"first_run_wizard: early hotkey listener started, self._hotkeys={self._hotkeys}")
+        _log(f"first_run_wizard: early hotkey listener started, type={type(self._hotkeys).__name__}")
 
         def on_first_run_save(cfg: Config) -> None:
+            _log("on_first_run_save: wizard save triggered")
             self._settings_win = None
             self._cfg = cfg
             # Stop the early listener — _start_services creates a fresh one
             if self._hotkeys is not None:
+                _log("on_first_run_save: stopping early hotkey listener")
                 self._hotkeys.stop()
                 self._hotkeys = None
             if sys.platform == "darwin":
                 self._hide_macos_dock()
+            _log("on_first_run_save: starting services")
             self._start_services()
+            _log("on_first_run_save: services started")
 
         _log("first_run_wizard: opening SettingsWindow")
         self._settings_win = SettingsWindow(
@@ -189,11 +203,17 @@ class App:
         self._tray.run()
 
         # Start hotkeys
+        def _on_hotkey_toggle_services():
+            _log(f"on_hotkey_toggle_services: FIRED on thread={threading.current_thread().name} id={threading.get_ident()}")
+            _log(f"on_hotkey_toggle_services: putting toggle_recording in queue (qsize={self._msg_queue.qsize()})")
+            self._msg_queue.put(("toggle_recording",))
+
         self._hotkeys = HotkeyManager(
             self._cfg.hotkey,
-            on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
+            on_toggle=_on_hotkey_toggle_services,
         )
         self._hotkeys.start()
+        _log(f"start_services: hotkey listener started, type={type(self._hotkeys).__name__}")
 
         # Check for updates in the background
         threading.Thread(target=self._check_for_update, daemon=True).start()
@@ -211,11 +231,20 @@ class App:
 
     def _poll_messages(self) -> None:
         """Process all pending messages from the queue."""
+        self._poll_count += 1
+        # Log heartbeat every 300 polls (~30 seconds at 100ms interval)
+        if self._poll_count % 300 == 0:
+            qsize = self._msg_queue.qsize()
+            _log(f"poll_heartbeat: poll#{self._poll_count} msgs_processed={self._msg_count} "
+                 f"queue_size={qsize} hotkeys={self._hotkeys!r} "
+                 f"settings_win={'open' if self._settings_win is not None else 'closed'} "
+                 f"thread={threading.current_thread().name}")
         try:
             while True:
                 msg = self._msg_queue.get_nowait()
                 if isinstance(msg, str):
                     msg = (msg,)
+                self._msg_count += 1
                 self._handle_message(msg)
         except queue.Empty:
             pass
@@ -225,16 +254,19 @@ class App:
 
     def _handle_message(self, msg: tuple[str, ...]) -> None:
         cmd = msg[0]
-        _log(f"handle_message: cmd={cmd!r}")
+        _log(f"handle_message: cmd={cmd!r} msg_total={self._msg_count} thread={threading.current_thread().name}")
 
         if cmd == "toggle_recording":
             # Route to settings window for visual feedback if open
-            _log(f"handle_message: toggle_recording, settings_win={self._settings_win}, cfg={self._cfg is not None}")
-            if (self._settings_win is not None
-                    and self._settings_win.winfo_exists()):
-                _log("handle_message: routing hotkey to settings window")
+            sw = self._settings_win
+            sw_exists = sw is not None and sw.winfo_exists() if sw is not None else False
+            _log(f"handle_message: toggle_recording — settings_win={sw!r} exists={sw_exists} cfg_loaded={self._cfg is not None}")
+            if sw_exists:
+                _log("handle_message: routing hotkey to settings window for visual feedback")
                 self._settings_win.notify_hotkey_fired()
+                _log("handle_message: notify_hotkey_fired() returned")
             else:
+                _log("handle_message: no settings window, calling _toggle_recording()")
                 self._toggle_recording()
         elif cmd == "show_settings":
             self._show_settings()
@@ -558,11 +590,16 @@ class App:
         )
 
         # Start hotkeys (includes SIGUSR1 on Linux)
+        def _on_hotkey_toggle_headless():
+            _log(f"on_hotkey_toggle_headless: FIRED on thread={threading.current_thread().name} id={threading.get_ident()}")
+            self._msg_queue.put(("toggle_recording",))
+
         self._hotkeys = HotkeyManager(
             cfg.hotkey,
-            on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
+            on_toggle=_on_hotkey_toggle_headless,
         )
         self._hotkeys.start()
+        _log(f"run_headless: hotkey listener started, type={type(self._hotkeys).__name__}")
 
         # Check for updates in the background
         threading.Thread(target=self._check_for_update, daemon=True).start()

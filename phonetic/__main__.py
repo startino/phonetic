@@ -67,7 +67,22 @@ def _check_macos_installation() -> None:
 
 def main() -> None:
     from .log import log as _log
-    _log("main() entered")
+    import platform
+    import threading
+
+    _log("=" * 60)
+    _log("main() entered — NEW SESSION")
+    _log(f"  PID={os.getpid()}")
+    _log(f"  Python={sys.version}")
+    _log(f"  executable={sys.executable}")
+    _log(f"  platform={sys.platform}")
+    _log(f"  frozen={is_frozen()}")
+    _log(f"  macOS version={platform.mac_ver()[0] if sys.platform == 'darwin' else 'N/A'}")
+    _log(f"  thread={threading.current_thread().name} (id={threading.get_ident()})")
+    if is_frozen():
+        _log(f"  bundle dir={os.path.dirname(os.path.dirname(sys.executable))}")
+    _log("=" * 60)
+
     _check_macos_installation()
     _log("installation check passed")
 

@@ -301,10 +301,16 @@ class SettingsWindow(ctk.CTkToplevel):
         """Called by App when the real pynput global hotkey fires while
         this settings window is open. Flashes the hotkey entry green."""
         from ..log import log
-        log("settings: global hotkey fired — flashing green")
-        self._hotkey_entry.configure(border_color="#22c55e")
-        self._hotkey_status.configure(text="Hotkey works!", text_color="#22c55e")
-        self.after(1200, self._reset_hotkey_status)
+        import threading
+        log(f"settings: notify_hotkey_fired() called on thread={threading.current_thread().name} id={threading.get_ident()}")
+        log(f"settings: window exists={self.winfo_exists()}")
+        try:
+            self._hotkey_entry.configure(border_color="#22c55e")
+            self._hotkey_status.configure(text="Hotkey works!", text_color="#22c55e")
+            self.after(1200, self._reset_hotkey_status)
+            log("settings: flashed green successfully")
+        except Exception as exc:
+            log(f"settings: ERROR flashing green: {exc}")
 
     def _reset_hotkey_status(self) -> None:
         """Reset hotkey entry border and hint text after flash."""
