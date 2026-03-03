@@ -42,6 +42,12 @@ a = Analysis(
         'phonetic.setup_prompt',
         *(['pystray._appindicator'] if sys.platform.startswith('linux') else []),
         *(['pystray._darwin'] if sys.platform == 'darwin' else []),
+        *([
+            'quickmachotkey',
+            'quickmachotkey._MinimalHIToolbox',
+            'quickmachotkey._MinimalHIToolbox._metadata',
+            'quickmachotkey.constants',
+        ] if sys.platform == 'darwin' else []),
         *(['pystray._win32'] if sys.platform == 'win32' else []),
         *([
             'pynput.keyboard._xorg',

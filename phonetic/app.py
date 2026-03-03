@@ -86,15 +86,10 @@ class App:
 
         _log(f"_run_gui: config loaded, cfg is None = {self._cfg is None}")
         if self._cfg is None:
-            # First run — permissions first, then wizard
+            # First run — mic permission, then wizard
             if sys.platform == "darwin":
-                _log("_run_gui: requesting input monitoring")
-                self._request_input_monitoring_interactive()
                 _log("_run_gui: requesting mic permission")
                 self._check_mic_permission()
-                # Reset to Accessory (no dock icon) before starting pynput.
-                # Non-first-run path does this too; matching that timing avoids
-                # the TSM dispatch_assert_queue_fail crash on Sequoia.
                 _log("_run_gui: hiding from dock")
                 self._hide_macos_dock()
             _log("_run_gui: showing first-run wizard")
@@ -151,15 +146,6 @@ class App:
         # path (before mainloop) which avoids the TSM crash on Sequoia.
         _log(f"first_run_wizard: starting early hotkey listener for {stub_cfg.hotkey!r}")
 
-        # Log Input Monitoring state right before listener creation
-        if sys.platform == "darwin":
-            try:
-                from Quartz import CGPreflightListenEventAccess
-                allowed = CGPreflightListenEventAccess()
-                _log(f"first_run_wizard: CGPreflightListenEventAccess={allowed} (right before HotkeyManager)")
-            except Exception as exc:
-                _log(f"first_run_wizard: input monitoring check failed: {exc}")
-
         self._hotkeys = HotkeyManager(
             stub_cfg.hotkey,
             on_toggle=lambda: self._msg_queue.put(("toggle_recording",)),
@@ -185,122 +171,10 @@ class App:
         )
         _log("first_run_wizard: SettingsWindow created")
 
-    def _check_input_monitoring(self) -> None:
-        """On macOS, check Input Monitoring permission and warn if not granted.
-
-        pynput uses CGEventTap which requires Input Monitoring, NOT
-        Accessibility.  CGPreflightListenEventAccess is the correct API."""
-
-        if sys.platform != "darwin":
-            return
-        try:
-            from Quartz import CGPreflightListenEventAccess
-            allowed = CGPreflightListenEventAccess()
-            _log(f"input_monitoring: CGPreflightListenEventAccess={allowed}")
-            if not allowed:
-                print("Warning: Input Monitoring permission not granted. Global hotkey will not work.", file=sys.stderr)
-                print("Grant in: System Settings → Privacy & Security → Input Monitoring", file=sys.stderr)
-                self._notify("Hotkey disabled — grant Input Monitoring in System Settings", "critical")
-        except Exception as exc:
-            _log(f"input_monitoring: EXCEPTION: {exc}")
-
-    @staticmethod
-    def _input_monitoring_marker() -> str:
-        """Path to a marker that records we already prompted for Input Monitoring."""
-        from .config import _config_dir
-        return os.path.join(_config_dir(), ".input_monitoring_prompted")
-
-    def _request_input_monitoring_interactive(self) -> None:
-        """On macOS first run, request Input Monitoring permission.
-
-        Only prompts once — a marker file prevents re-prompting on
-        subsequent launches (macOS restarts the app when the user toggles
-        the permission, which creates an infinite prompt loop with
-        ad-hoc signed apps)."""
-
-        if sys.platform != "darwin":
-            return
-
-        # Already permitted → nothing to do
-        try:
-            from Quartz import CGPreflightListenEventAccess
-            allowed = CGPreflightListenEventAccess()
-            _log(f"input_monitoring_interactive: CGPreflightListenEventAccess={allowed}")
-            if allowed:
-                return
-        except Exception as exc:
-            _log(f"input_monitoring_interactive: preflight failed: {exc}")
-            return
-
-        # Already prompted → don't loop
-        marker = self._input_monitoring_marker()
-        if os.path.exists(marker):
-            _log("input_monitoring_interactive: marker exists, skipping re-prompt")
-            return
-
-        # Become foreground so the dialog is visible
-        try:
-            from AppKit import (
-                NSApplication,
-                NSApplicationActivationPolicyRegular,
-            )
-            app = NSApplication.sharedApplication()
-            app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
-            app.activateIgnoringOtherApps_(True)
-        except Exception as exc:
-            _log(f"input_monitoring_interactive: foreground failed: {exc}")
-
-        # Try the API request first (works for properly signed apps)
-        _log("input_monitoring_interactive: calling CGRequestListenEventAccess")
-        try:
-            from Quartz import CGRequestListenEventAccess
-            CGRequestListenEventAccess()
-        except Exception as exc:
-            _log(f"input_monitoring_interactive: request failed: {exc}")
-
-        # Also open System Settings directly to Input Monitoring pane
-        # (for ad-hoc signed apps the API prompt may not register the app)
-        _log("input_monitoring_interactive: opening System Settings Input Monitoring")
-        import subprocess
-        subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"])
-
-        # Write marker before the blocking dialog so relaunches skip
-        try:
-            os.makedirs(os.path.dirname(marker), exist_ok=True)
-            with open(marker, "w") as f:
-                f.write("")
-            _log(f"input_monitoring_interactive: wrote marker {marker}")
-        except Exception as exc:
-            _log(f"input_monitoring_interactive: marker write failed: {exc}")
-
-        # Block until user clicks OK
-        from tkinter import messagebox
-        messagebox.showinfo(
-            "Phonetic — Input Monitoring Permission",
-            "Phonetic needs Input Monitoring permission for global hotkeys.\n\n"
-            "1. In System Settings → Privacy & Security → Input Monitoring\n"
-            "2. Click the + button and add Phonetic from Applications\n"
-            "3. Toggle Phonetic ON\n"
-            "4. Click OK here when done",
-        )
-        _log("input_monitoring_interactive: user dismissed dialog")
-
-        # Re-check after user interaction
-        try:
-            from Quartz import CGPreflightListenEventAccess
-            allowed = CGPreflightListenEventAccess()
-            _log(f"input_monitoring_interactive: after dialog, CGPreflightListenEventAccess={allowed}")
-        except Exception:
-            pass
-
     def _start_services(self) -> None:
         """Start recorder, tray, and hotkeys after config is available."""
 
         assert self._cfg is not None
-
-        # Check Input Monitoring before starting hotkeys (macOS only)
-        _log("start_services: checking input monitoring")
-        self._check_input_monitoring()
         _log(f"start_services: creating recorder (sr={self._cfg.sample_rate}, ch={self._cfg.channels}, dev={self._cfg.device})")
 
         self._rec = Recorder(
