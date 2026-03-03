@@ -12,7 +12,7 @@
 - `config.py` — Platform-aware config (macOS: ~/Library/Application Support/Phonetic, Windows: %APPDATA%\Phonetic, Linux: ~/.config/phonetic)
 - `app.py` — Orchestrator, message dispatch, toggle_recording logic
 - `tray.py` — pystray TrayManager, programmatic icon generation
-- `hotkeys.py` — pynput GlobalHotKeys + SIGUSR1 fallback on Linux
+- `hotkeys.py` — Carbon RegisterEventHotKey on macOS, pynput on Linux/Windows, SIGUSR1 fallback on Linux
 - `ui/settings.py` — CTkToplevel settings window, doubles as first-run wizard
 - `autostart.py` — LaunchAgent (macOS), Registry (Windows), XDG .desktop (Linux)
 
@@ -23,7 +23,8 @@
 - GitHub Actions release workflow at `.github/workflows/release.yml`
 
 ## Key Dependencies
-- `pynput` (all platforms, replaced python-xlib on Linux)
+- `quickmachotkey` (macOS only — Carbon RegisterEventHotKey, no permissions needed)
+- `pynput` (Linux/Windows hotkeys, replaced python-xlib on Linux)
 - `pystray` + `Pillow` (tray icon)
 - `customtkinter` (settings UI)
 - `pyobjc-framework-Cocoa` + `pyobjc-framework-ApplicationServices` (macOS only)
@@ -81,6 +82,13 @@ xattr -cr ~/Applications/Phonetic.app
 open ~/Applications/Phonetic.app
 ```
 
+## macOS Install Gotchas
+- **Always install to `~/Applications/`** — never `/Applications/`
+- `/Applications/` on Sequoia has `com.apple.provenance` xattr that blocks unsigned dylibs
+- Opening a DMG can cause Finder to copy to `/Applications/` via drag — always check BOTH locations after install
+- After nuclear cleanup, verify with: `find ~/Applications /Applications -name "*Phonetic*"` — there should be exactly one
+- DMG mounts at `/Volumes/Phonetic` persist after install — always detach before re-installing
+
 ## macOS Known Issues
 - **Bundle ID**: `no.starti.phonetic`
 - **Sequoia com.apple.provenance**: Immutable xattr on /Applications apps, blocks unsigned dylibs. Install to ~/Applications instead.
@@ -92,6 +100,8 @@ open ~/Applications/Phonetic.app
 - **pynput Listener crashes on macOS Sequoia**: Creating a `keyboard.Listener` (or `GlobalHotKeys`) from a background thread crashes with `dispatch_assert_queue_fail` in `TSMGetInputSourceProperty`. Only create listeners once at startup; never stop + recreate.
 - **Option key composes characters**: On macOS, Alt/Option changes the key character (e.g. Alt+R → ®). pynput's `GlobalHotKeys` can't match these. Use virtual keycode-based matching instead.
 - **tkinter keycode encoding**: On macOS, `event.keycode` encodes the virtual keycode in bits 24-31. Extract with `(event.keycode >> 24) & 0xFF`.
+- **pynput CGEventTap needs Input Monitoring**: pynput uses CGEventTap which requires Input Monitoring (not Accessibility) TCC permission. Ad-hoc signed apps can't programmatically request this — the app never appears in System Settings for the user to toggle.
+- **Carbon RegisterEventHotKey needs NO permissions**: Replaced pynput with quickmachotkey (Carbon HIToolbox) on macOS in v0.5.55. Deprecated API but only permission-free approach. Untested on Tahoe (26.3) as of v0.5.56.
 
 ## Dev Commands
 - `uv run phonetic` — GUI mode

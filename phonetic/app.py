@@ -178,10 +178,16 @@ class App:
             self._start_services()
             _log("on_first_run_save: services started")
 
+        def on_hotkey_change(new_hotkey: str) -> None:
+            _log(f"on_hotkey_change: {new_hotkey!r}")
+            if self._hotkeys is not None:
+                self._hotkeys.update_hotkey(new_hotkey)
+
         _log("first_run_wizard: opening SettingsWindow")
         self._settings_win = SettingsWindow(
             self._root, stub_cfg, first_run=True,
             on_save=on_first_run_save,
+            on_hotkey_change=on_hotkey_change,
         )
         _log("first_run_wizard: SettingsWindow created")
 
@@ -440,16 +446,22 @@ class App:
             from .autostart import set_autostart
             set_autostart(cfg.auto_start)
 
-            # Update hotkey if changed (requires restart on macOS)
+            # Update hotkey if changed
             if self._hotkeys and old_hotkey != cfg.hotkey:
                 try:
                     self._hotkeys.update_hotkey(cfg.hotkey)
-                    if sys.platform == "darwin":
-                        self._notify("Restart Phonetic for the new hotkey to take effect")
                 except ValueError as e:
                     print(f"Hotkey error: {e}", file=sys.stderr)
 
-        self._settings_win = SettingsWindow(self._root, self._cfg, on_save=on_settings_save)
+        def on_settings_hotkey_change(new_hotkey: str) -> None:
+            _log(f"on_settings_hotkey_change: {new_hotkey!r}")
+            if self._hotkeys is not None:
+                self._hotkeys.update_hotkey(new_hotkey)
+
+        self._settings_win = SettingsWindow(
+            self._root, self._cfg, on_save=on_settings_save,
+            on_hotkey_change=on_settings_hotkey_change,
+        )
 
     # --- macOS dock hiding ---
 

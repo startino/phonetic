@@ -18,11 +18,13 @@ class SettingsWindow(ctk.CTkToplevel):
         config: Optional[Config],
         first_run: bool = False,
         on_save: Optional[Callable[[Config], None]] = None,
+        on_hotkey_change: Optional[Callable[[str], None]] = None,
     ) -> None:
         super().__init__(master)
         self._config = config
         self._first_run = first_run
         self._on_save = on_save
+        self._on_hotkey_change = on_hotkey_change
         self._cancelled = False
 
         self.title("Phonetic — First Run Setup" if first_run else "Phonetic — Settings")
@@ -256,6 +258,10 @@ class SettingsWindow(ctk.CTkToplevel):
         self._record_btn.configure(text="Record")
         if combo:
             self._hotkey_var.set(combo)
+            if self._on_hotkey_change:
+                from ..log import log
+                log(f"settings: hotkey recorded {combo!r}, notifying app")
+                self._on_hotkey_change(combo)
 
     def _on_record_key_press(self, event: tk.Event) -> str:
         keysym = event.keysym

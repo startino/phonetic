@@ -329,12 +329,56 @@ class _CarbonHotkeyManager:
             log("carbon_hotkey: stop() — no hotkey_ref to unregister")
 
     def update_hotkey(self, new_hotkey: str) -> None:
-        """Update the hotkey — requires stop/start cycle."""
+        """Update the hotkey — unregister old, re-register new."""
         from .log import log
         log(f"carbon_hotkey: update_hotkey({new_hotkey!r}) — old was {self._hotkey!r}")
+        # Unregister old hotkey (but keep event handler + heartbeat)
+        if self._hotkey_ref is not None:
+            try:
+                from quickmachotkey._MinimalHIToolbox import UnregisterEventHotKey
+                UnregisterEventHotKey(self._hotkey_ref)
+                log("carbon_hotkey: old hotkey unregistered")
+            except Exception as exc:
+                log(f"carbon_hotkey: old hotkey unregister error: {exc}")
+            self._hotkey_ref = None
+
         self._hotkey = new_hotkey
         self._required_mods, self._target_vk = _parse_hotkey(new_hotkey)
-        log(f"carbon_hotkey: after update: mods={self._required_mods} vk={self._target_vk}")
+
+        if self._target_vk is None:
+            log("carbon_hotkey: new hotkey has no virtual key, not re-registering")
+            return
+
+        # Re-register with new key/modifiers
+        modifier_mask = 0
+        for mod in self._required_mods:
+            modifier_mask |= _MOD_TO_CARBON.get(mod, 0)
+
+        try:
+            from quickmachotkey._MinimalHIToolbox import (
+                GetEventDispatcherTarget,
+                RegisterEventHotKey,
+            )
+            from struct import unpack
+
+            PHON = unpack("@I", b"PHON")[0]
+            HOT_KEY_ID = 1
+            hotkey_id = (PHON, HOT_KEY_ID)
+
+            result, hotkey_ref = RegisterEventHotKey(
+                self._target_vk, modifier_mask, hotkey_id,
+                GetEventDispatcherTarget(), 0, None,
+            )
+            log(f"carbon_hotkey: re-register result={result} hotkey_ref={hotkey_ref!r} vk={self._target_vk} mods=0x{modifier_mask:04x}")
+            if result == 0:
+                self._hotkey_ref = hotkey_ref
+                log(f"carbon_hotkey: now listening for {new_hotkey!r}")
+            else:
+                log(f"carbon_hotkey: FAILED to re-register (OSStatus={result})")
+        except Exception as exc:
+            log(f"carbon_hotkey: re-register EXCEPTION: {exc}")
+            import traceback
+            log(f"carbon_hotkey: traceback: {traceback.format_exc()}")
 
 
 class _PynputHotkeyManager(_PidFileMixin):
