@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 DIST="$ROOT/dist"
-VERSION="0.3.0"
+VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
 
 echo "Building Linux binary..."
 cd "$ROOT"
@@ -32,7 +32,7 @@ Version: $VERSION
 Section: utils
 Priority: optional
 Architecture: amd64
-Depends: libportaudio2, libsndfile1, wl-clipboard | xclip, libnotify-bin
+Depends: libportaudio2, libsndfile1, wl-clipboard | xclip, libnotify-bin, gir1.2-ayatanaappindicator3-0.1, libgtk-3-0, libgirepository-1.0-1
 Maintainer: Startino <hello@startino.com>
 Description: Hotkey-based speech-to-text via multimodal LLM
  Press a keybind to record, press again to stop — transcription
@@ -55,12 +55,10 @@ ln -sf /opt/phonetic/phonetic "$DEB_DIR/usr/local/bin/phonetic"
 # Post-install script: launch Phonetic GUI so the first-run wizard appears
 cat > "$DEB_DIR/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
-# Launch Phonetic for the logged-in user so the first-run wizard appears
 if [ "$1" = "configure" ]; then
     REAL_USER="${SUDO_USER:-$USER}"
-    if [ "$REAL_USER" != "root" ] && command -v sudo >/dev/null; then
-        sudo -u "$REAL_USER" sh -c \
-          'DISPLAY="${DISPLAY:-:0}" nohup /opt/phonetic/phonetic >/dev/null 2>&1 &'
+    if [ "$REAL_USER" != "root" ] && [ -n "$DISPLAY$WAYLAND_DISPLAY" ]; then
+        sudo -u "$REAL_USER" nohup /opt/phonetic/phonetic >/dev/null 2>&1 &
     fi
 fi
 EOF
