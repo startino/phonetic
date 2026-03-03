@@ -33,6 +33,17 @@ def list_input_devices() -> list[dict]:
     return devices
 
 
+def _try_open(device: Optional[int], label: str) -> bool:
+    """Try opening a brief InputStream to validate the device works."""
+    try:
+        s = sd.InputStream(device=device, channels=1, dtype="float32")
+        s.close()
+        return True
+    except Exception as e:
+        print(f"[audio] {label} device {device} failed probe: {e}")
+        return False
+
+
 def detect_audio() -> tuple[int, int, Optional[int]]:
     """Return (sample_rate, channels, device_index) from the default input device.
 
@@ -40,6 +51,9 @@ def detect_audio() -> tuple[int, int, Optional[int]]:
       1. PulseAudio host API (pipewire-pulse)
       2. JACK host API (pipewire-jack) — matched by PipeWire default source name
     Falls back to the system default on all platforms.
+
+    Every candidate is probe-opened before being returned so that transient
+    device errors (e.g. Bluetooth not in capture mode) are caught early.
     """
     try:
         if sys.platform.startswith("linux"):
@@ -56,7 +70,7 @@ def detect_audio() -> tuple[int, int, Optional[int]]:
                 if "pulse" not in api["name"].lower():
                     continue
                 idx = api["default_input_device"]
-                if idx >= 0:
+                if idx >= 0 and _try_open(idx, "PulseAudio"):
                     dev = sd.query_devices(idx)
                     print(f"Audio device: {dev['name']} (PulseAudio)")
                     return int(dev["default_samplerate"]), 1, idx
@@ -73,11 +87,12 @@ def detect_audio() -> tuple[int, int, Optional[int]]:
                         if dev["max_input_channels"] <= 0:
                             continue
                         if pw_name.lower() in dev["name"].lower():
-                            print(f"Audio device: {dev['name']} (JACK/PipeWire)")
-                            return int(dev["default_samplerate"]), 1, dev_idx
+                            if _try_open(dev_idx, "JACK/PipeWire"):
+                                print(f"Audio device: {dev['name']} (JACK/PipeWire)")
+                                return int(dev["default_samplerate"]), 1, dev_idx
                 # Otherwise use JACK's default input
                 idx = api["default_input_device"]
-                if idx >= 0:
+                if idx >= 0 and _try_open(idx, "JACK"):
                     dev = sd.query_devices(idx)
                     print(f"Audio device: {dev['name']} (JACK)")
                     return int(dev["default_samplerate"]), 1, idx
@@ -85,7 +100,9 @@ def detect_audio() -> tuple[int, int, Optional[int]]:
         # Fallback: system default (CoreAudio on macOS, WASAPI on Windows,
         # ALSA on Linux when PulseAudio/JACK are unavailable)
         dev = sd.query_devices(kind="input")
-        print(f"Audio device: {dev['name']} (fallback)")
-        return int(dev["default_samplerate"]), 1, None
+        if _try_open(None, "fallback"):
+            print(f"Audio device: {dev['name']} (fallback)")
+            return int(dev["default_samplerate"]), 1, None
+        raise RuntimeError("system default device failed to open")
     except Exception as e:
         raise RuntimeError(f"No audio input device found: {e}") from e

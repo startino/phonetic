@@ -26,15 +26,29 @@ class Recorder:
             return
         self._frames.clear()
         self._q = queue.Queue()
-        self._stream = sd.InputStream(
-            device=self.device,
-            channels=self.channels,
-            dtype="float32",
-            callback=self._callback,
-        )
+        try:
+            self._stream = sd.InputStream(
+                device=self.device,
+                channels=self.channels,
+                dtype="float32",
+                callback=self._callback,
+            )
+            self._stream.start()
+        except Exception as e:
+            if self.device is not None:
+                print(f"[recorder] device {self.device} failed: {e}, "
+                      f"retrying with system default", file=sys.stderr)
+                self.device = None
+                self._stream = sd.InputStream(
+                    channels=self.channels,
+                    dtype="float32",
+                    callback=self._callback,
+                )
+                self._stream.start()
+            else:
+                raise
         # Use the stream's actual sample rate (auto-detected from device)
         self.sample_rate = int(self._stream.samplerate)
-        self._stream.start()
         self.is_recording = True
 
     def stop(self) -> np.ndarray:
