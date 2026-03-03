@@ -27,9 +27,9 @@
           pkgs.libsndfile
           pkgs.alsa-lib
           pkgs.libpulseaudio
-          pkgs.xorg.libX11
-          pkgs.xorg.libXext
-          pkgs.xorg.libXrender
+          pkgs.libx11
+          pkgs.libxext
+          pkgs.libxrender
           pkgs.gobject-introspection
           pkgs.gtk3
           pkgs.libappindicator-gtk3
@@ -49,9 +49,9 @@
             pkgs.wl-clipboard
             pkgs.libnotify
             pkgs.pipewire
-            pkgs.xorg.libX11
-            pkgs.xorg.libXext
-            pkgs.xorg.libXrender
+            pkgs.libx11
+            pkgs.libxext
+            pkgs.libxrender
             pkgs.pkg-config
             pkgs.gobject-introspection
             pkgs.gtk3
