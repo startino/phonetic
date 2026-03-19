@@ -1,7 +1,6 @@
 import base64
 import io
 import json
-import tempfile
 
 import httpx
 import numpy as np
@@ -11,6 +10,24 @@ from .config import Config
 
 # Write the last recorded WAV here so we can verify audio capture independently
 _DEBUG_WAV = "/tmp/phonetic_debug.wav"
+
+# Downsample to 16 kHz when the WAV payload would exceed this threshold (bytes).
+# 16 kHz mono PCM-16 ≈ ~32 KB/s — a 7-minute recording is ~13 MB, well within API limits.
+_MAX_WAV_BYTES = 20_000_000  # 20 MB
+_DOWNSAMPLE_RATE = 16_000
+
+
+def _downsample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
+    """Downsample audio via linear interpolation (no scipy dependency)."""
+    old_len = len(audio)
+    new_len = int(old_len * dst_rate / src_rate)
+    old_indices = np.linspace(0, old_len - 1, new_len)
+    lower = np.floor(old_indices).astype(int)
+    upper = np.minimum(lower + 1, old_len - 1)
+    frac = old_indices - lower
+    if audio.ndim > 1:
+        frac = frac[:, np.newaxis]
+    return (audio[lower] * (1 - frac) + audio[upper] * frac).astype(audio.dtype)
 
 
 def audio_to_base64(audio: np.ndarray, sample_rate: int) -> str:
@@ -23,13 +40,6 @@ def audio_to_base64(audio: np.ndarray, sample_rate: int) -> str:
     wav_bytes = buf.getvalue()
     print(f"[transcribe] WAV size: {len(wav_bytes)} bytes, "
           f"channels={channels}, rate={sample_rate}Hz")
-    # Save to disk so we can play it back and verify capture
-    try:
-        with open(_DEBUG_WAV, "wb") as df:
-            df.write(wav_bytes)
-        print(f"[transcribe] Debug WAV saved to {_DEBUG_WAV}")
-    except Exception as e:
-        print(f"[transcribe] Could not save debug WAV: {e}")
     return base64.b64encode(wav_bytes).decode("ascii")
 
 
@@ -41,6 +51,33 @@ def transcribe(cfg: Config, audio: np.ndarray, sample_rate: int | None = None) -
     peak = float(np.max(np.abs(audio)))
     print(f"[transcribe] Audio: {duration:.1f}s, peak={peak:.4f}, rate={sample_rate}Hz, "
           f"shape={audio.shape}, dtype={audio.dtype}")
+
+    # Save full-quality debug WAV before any downsampling
+    try:
+        buf = io.BytesIO()
+        channels = audio.shape[1] if audio.ndim > 1 else 1
+        with sf.SoundFile(buf, mode="w", samplerate=sample_rate, channels=channels,
+                          subtype="PCM_16", format="WAV") as f:
+            f.write(audio)
+        debug_bytes = buf.getvalue()
+        with open(_DEBUG_WAV, "wb") as df:
+            df.write(debug_bytes)
+        print(f"[transcribe] Debug WAV saved to {_DEBUG_WAV} ({len(debug_bytes)} bytes)")
+    except Exception as e:
+        print(f"[transcribe] Could not save debug WAV: {e}")
+        debug_bytes = None
+
+    # Downsample long recordings to keep the API payload manageable
+    est_wav_size = debug_bytes and len(debug_bytes) or (audio.shape[0] * 2 * channels + 44)
+    if sample_rate > _DOWNSAMPLE_RATE and est_wav_size > _MAX_WAV_BYTES:
+        print(f"[transcribe] WAV too large ({est_wav_size} bytes), "
+              f"downsampling {sample_rate}Hz -> {_DOWNSAMPLE_RATE}Hz")
+        if audio.ndim > 1:
+            audio = audio[:, 0]
+        audio = _downsample(audio, sample_rate, _DOWNSAMPLE_RATE)
+        sample_rate = _DOWNSAMPLE_RATE
+        print(f"[transcribe] After downsample: shape={audio.shape}, rate={sample_rate}Hz")
+
     audio_b64 = audio_to_base64(audio, sample_rate)
     print(f"[transcribe] Base64 payload: {len(audio_b64)} chars")
 
