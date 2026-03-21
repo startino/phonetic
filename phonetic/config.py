@@ -128,22 +128,42 @@ def load_config(require_key: bool = True) -> Optional[Config]:
     )
 
 
+def _format_config_env(cfg: Config) -> str:
+    """Format config as a commented .env file matching .env.example layout."""
+    def _quote(value: object) -> str:
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        s = str(value)
+        escaped = s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        return f'"{escaped}"'
+
+    return f"""\
+# phonetic configuration
+# See .env.example for full documentation.
+
+# Required: OpenRouter API key (https://openrouter.ai/settings/keys)
+OPENROUTER_API_KEY={_quote(cfg.openrouter_api_key)}
+
+# Model to use for transcription (OpenRouter model ID)
+MODEL={_quote(cfg.model)}
+
+# Hotkey (pynput format; on Wayland also supports SIGUSR1)
+HOTKEY={_quote(cfg.hotkey)}
+
+# Notifications: 1 to enable, 0 to disable
+NOTIFY={_quote(cfg.notify)}
+
+# Auto-start at login: 1 to enable, 0 to disable
+AUTO_START={_quote(cfg.auto_start)}
+
+# System prompt sent to the model (default: echoai transcription prompt)
+SYSTEM_PROMPT={_quote(cfg.system_prompt)}
+"""
+
+
 def save_config(cfg: Config) -> Path:
     """Save config fields to the platform config path. Returns the path written."""
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-
-    lines = []
-    for field_name in Config._SAVE_FIELDS:
-        env_name = Config._FIELD_ENV_MAP[field_name]
-        value = getattr(cfg, field_name)
-        if isinstance(value, bool):
-            value = "1" if value else "0"
-        else:
-            value = str(value)
-        # Quote values to handle spaces, #, and special characters
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-        lines.append(f'{env_name}="{escaped}"')
-
-    path.write_text("\n".join(sorted(lines)) + "\n", encoding="utf-8")
+    path.write_text(_format_config_env(cfg), encoding="utf-8")
     return path
