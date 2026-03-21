@@ -260,7 +260,7 @@ wheels = [
 
 [[package]]
 name = "phonetic"
-version = "0.5.58"
+version = "0.5.62"
 source = { editable = "." }
 dependencies = [
     { name = "customtkinter" },
