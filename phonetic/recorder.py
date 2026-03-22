@@ -51,6 +51,24 @@ class Recorder:
         self.sample_rate = int(self._stream.samplerate)
         self.is_recording = True
 
+    def peek_level(self) -> float:
+        """Check peak amplitude of audio captured so far without stopping.
+
+        Drains the internal queue into the frame buffer (same as stop() does)
+        so frames are not lost.  Returns 0.0 if no frames yet.
+        """
+        if not self.is_recording:
+            return 0.0
+        while not self._q.empty():
+            try:
+                self._frames.append(self._q.get_nowait())
+            except queue.Empty:
+                break
+        if not self._frames:
+            return 0.0
+        audio = np.concatenate(self._frames, axis=0)
+        return float(np.max(np.abs(audio)))
+
     def stop(self) -> np.ndarray:
         if not self.is_recording:
             return np.empty((0, self.channels), dtype=np.float32)

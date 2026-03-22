@@ -329,6 +329,11 @@ class App:
             self._notify("Recording started", "low", persist=True)
             if self._tray:
                 self._tray.set_state(True)
+            # Schedule early audio check after 1 second to catch silent input
+            if self._root is not None:
+                self._root.after(1000, self._check_early_audio)
+            else:
+                threading.Timer(1.0, self._check_early_audio).start()
         else:
             print("Stopping, processing...")
             audio = self._rec.stop()
@@ -373,6 +378,24 @@ class App:
                 daemon=True,
             )
             thread.start()
+
+    def _check_early_audio(self) -> None:
+        """Check audio level after 1s of recording to catch silent input early."""
+        if self._rec is None or not self._rec.is_recording:
+            return
+        peak = self._rec.peek_level()
+        _log(f"early_audio_check: peak={peak:.6f}")
+        if peak < 0.001:
+            _log("early_audio_check: silent — stopping recording")
+            self._rec.stop()
+            if self._tray:
+                self._tray.set_state(False)
+            if sys.platform == "darwin":
+                msg = "No audio detected — check microphone permissions in System Settings"
+            else:
+                msg = "No audio detected — check that your mic is not muted"
+            print(msg, file=sys.stderr)
+            self._notify(msg, "critical", replace=True)
 
     def _transcribe_worker(self, audio: np.ndarray, sample_rate: int) -> None:
         """Run transcription in a background thread and post result back."""
