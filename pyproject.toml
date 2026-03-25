@@ -1,6 +1,6 @@
 [project]
 name = "phonetic"
-version = "0.5.65"
+version = "0.5.66"
 description = "Hotkey-based speech-to-text via multimodal LLM"
 readme = "README.md"
 requires-python = ">=3.12"
