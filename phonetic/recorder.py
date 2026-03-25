@@ -15,17 +15,23 @@ class Recorder:
         self._stream: Optional[sd.InputStream] = None
         self._frames: list[np.ndarray] = []
         self.is_recording = False
+        self._cb_logged = False
 
     def _callback(self, indata, frames, time_info, status):
         if status:
             print(status, file=sys.stderr)
         self._q.put(indata.copy())
+        if not self._cb_logged:
+            print(f"[recorder] first callback: frames={frames}, shape={indata.shape}, "
+                  f"qsize={self._q.qsize()}")
+            self._cb_logged = True
 
     def start(self) -> None:
         if self.is_recording:
             return
         self._frames.clear()
         self._q = queue.Queue()
+        self._cb_logged = False
         try:
             self._stream = sd.InputStream(
                 device=self.device,
@@ -65,9 +71,12 @@ class Recorder:
             except queue.Empty:
                 break
         if not self._frames:
+            print(f"[recorder] peek_level: no frames yet (qsize={self._q.qsize()}, cb_fired={self._cb_logged})")
             return 0.0
         audio = np.concatenate(self._frames, axis=0)
-        return float(np.max(np.abs(audio)))
+        peak = float(np.max(np.abs(audio)))
+        print(f"[recorder] peek_level: frames={len(self._frames)}, samples={audio.shape[0]}, peak={peak:.6f}")
+        return peak
 
     def stop(self) -> np.ndarray:
         if not self.is_recording:
