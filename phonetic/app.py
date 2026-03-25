@@ -348,17 +348,18 @@ class App:
                 self._notify("No audio captured", "critical", replace=True)
                 return
 
-            # Abort if audio is silent (wrong device, missing permissions, muted mic)
+            # Warn if audio appears silent but still attempt transcription —
+            # some backends (PipeWire/ALSA) deliver low-level data that
+            # transcribes fine despite a low float32 peak
             peak = float(np.max(np.abs(audio)))
             _log(f"toggle_recording: peak={peak:.6f}, duration={audio.shape[0]/self._rec.sample_rate:.2f}s")
             if peak < 0.001:
                 if sys.platform == "darwin":
-                    msg = "No audio detected — check microphone permissions in System Settings"
+                    msg = "Audio may be silent — check microphone permissions"
                 else:
-                    msg = "No audio detected — check that your mic is not muted"
+                    msg = "Audio may be silent — check that your mic is not muted"
                 print(msg, file=sys.stderr)
-                self._notify(msg, "critical", replace=True)
-                return
+                self._notify(msg, "normal")
 
             duration = audio.shape[0] / self._rec.sample_rate
             if duration < MIN_DURATION_SECS:
@@ -380,22 +381,19 @@ class App:
             thread.start()
 
     def _check_early_audio(self) -> None:
-        """Check audio level after 1s of recording to catch silent input early."""
+        """Check audio level after 1s of recording and warn if silent."""
         if self._rec is None or not self._rec.is_recording:
             return
         peak = self._rec.peek_level()
         _log(f"early_audio_check: peak={peak:.6f}")
         if peak < 0.001:
-            _log("early_audio_check: silent — stopping recording")
-            self._rec.stop()
-            if self._tray:
-                self._tray.set_state(False)
+            _log("early_audio_check: low audio level — warning (recording continues)")
             if sys.platform == "darwin":
-                msg = "No audio detected — check microphone permissions in System Settings"
+                msg = "Low/no audio — check microphone permissions in System Settings"
             else:
-                msg = "No audio detected — check that your mic is not muted"
+                msg = "Low/no audio — check that your mic is not muted"
             print(msg, file=sys.stderr)
-            self._notify(msg, "critical", replace=True)
+            self._notify(msg, "normal", replace=True)
 
     def _transcribe_worker(self, audio: np.ndarray, sample_rate: int) -> None:
         """Run transcription in a background thread and post result back."""
