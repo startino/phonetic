@@ -7,9 +7,12 @@ Please format it nicely, you know, paragraphs, proper punctuation, proper capita
 """
 
 # Default transcription model (OpenRouter model ID). Audio-capable via the
-# `input_audio` content part on chat/completions, honours the system prompt,
-# and is not geo-blocked for HK companies (Google models are).
-DEFAULT_MODEL = "openai/gpt-4o-audio-preview"
+# `input_audio` content part on chat/completions, honours the system prompt
+# for output formatting. Provider must NOT be OpenAI, Anthropic, or Google:
+# OpenRouter geo-blocks all three for HK-region billing addresses, which is
+# what locked HK orgs out. Mistral's Voxtral (speech transcription model) is
+# unaffected.
+DEFAULT_MODEL = "mistralai/voxtral-small-24b-2507"
 
 MIN_DURATION_SECS = 0.5
 WARN_DURATION_SECS = 300
