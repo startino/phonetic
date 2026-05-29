@@ -4,7 +4,10 @@ from phonetic.constants import DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
 
 
 def test_default_model_constant():
-    assert DEFAULT_MODEL == "google/gemini-3-flash-preview"
+    # Default must stay on a provider OpenRouter does not geo-block for HK
+    # billing (not OpenAI/Anthropic/Google). Mistral Voxtral is the chosen
+    # default; see phonetic/constants.py and ADR 0001.
+    assert DEFAULT_MODEL == "mistralai/voxtral-small-24b-2507"
 
 
 def test_load_defaults_blank_asr_falls_back(isolated_config, monkeypatch):
