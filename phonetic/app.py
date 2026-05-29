@@ -1,3 +1,4 @@
+import dataclasses
 import os
 import queue
 import sys
@@ -8,7 +9,7 @@ from typing import Optional
 import numpy as np
 
 from .clipboard import copy_to_clipboard
-from .config import Config, load_config
+from .config import Config, Profile, load_config
 from .log import log as _log
 from .constants import DEFAULT_MODEL, MIN_DURATION_SECS, WARN_DURATION_SECS
 from .hotkeys import HotkeyManager
@@ -38,6 +39,7 @@ class App:
         self._settings_win = None  # SettingsWindow ref for hotkey routing
         self._poll_count = 0  # message poll counter for heartbeat logging
         self._msg_count = 0  # total messages processed
+        self._recording_profile_id = ""  # profile id of the in-flight recording
 
     def run(self) -> None:
         """Main entry point."""
@@ -221,10 +223,29 @@ class App:
         self._hotkeys.start()
         _log(f"start_services: hotkey listener started, type={type(self._hotkeys).__name__}")
 
+        # Register all per-keybind profiles so each profile's hotkey works.
+        self._register_profile_hotkeys()
+
         # Check for updates in the background
         threading.Thread(target=self._check_for_update, daemon=True).start()
 
         print(f"Ready. Press {self._cfg.hotkey} to start/stop recording.")
+
+    def _register_profile_hotkeys(self) -> None:
+        """Register every profile's hotkey on the active hotkey manager."""
+        if self._hotkeys is None or self._cfg is None or not self._cfg.profiles:
+            return
+
+        def _on_toggle_for_profile(profile_id: str) -> None:
+            _log(f"on_toggle_for_profile: FIRED profile_id={profile_id!r} "
+                 f"thread={threading.current_thread().name} id={threading.get_ident()}")
+            self._msg_queue.put(("toggle_recording", profile_id))
+
+        try:
+            _log(f"register_profile_hotkeys: registering {len(self._cfg.profiles)} profile(s)")
+            self._hotkeys.update_hotkeys(self._cfg.profiles, _on_toggle_for_profile)
+        except Exception as e:
+            _log(f"register_profile_hotkeys: FAILED: {e}")
 
     def _check_for_update(self) -> None:
         from . import __version__
@@ -263,17 +284,18 @@ class App:
         _log(f"handle_message: cmd={cmd!r} msg_total={self._msg_count} thread={threading.current_thread().name}")
 
         if cmd == "toggle_recording":
+            profile_id = msg[1] if len(msg) > 1 else ""
             # Route to settings window for visual feedback if open
             sw = self._settings_win
             sw_exists = sw is not None and sw.winfo_exists() if sw is not None else False
-            _log(f"handle_message: toggle_recording — settings_win={sw!r} exists={sw_exists} cfg_loaded={self._cfg is not None}")
+            _log(f"handle_message: toggle_recording — profile_id={profile_id!r} settings_win={sw!r} exists={sw_exists} cfg_loaded={self._cfg is not None}")
             if sw_exists:
                 _log("handle_message: routing hotkey to settings window for visual feedback")
                 self._settings_win.notify_hotkey_fired()
                 _log("handle_message: notify_hotkey_fired() returned")
             else:
-                _log("handle_message: no settings window, calling _toggle_recording()")
-                self._toggle_recording()
+                _log(f"handle_message: no settings window, calling _toggle_recording(profile_id={profile_id!r})")
+                self._toggle_recording(profile_id)
         elif cmd == "show_settings":
             self._show_settings()
         elif cmd == "quit":
@@ -298,9 +320,26 @@ class App:
             if cfg is not None:
                 self._cfg = cfg
 
+    # --- Profile resolution ---
+
+    def _resolve_profile(self, profile_id: str = "") -> Optional[Profile]:
+        """Return the Profile for profile_id, falling back to active/default."""
+        if self._cfg is None or not self._cfg.profiles:
+            return None
+        if profile_id:
+            for p in self._cfg.profiles:
+                if p.id == profile_id:
+                    return p
+        active = self._cfg.active_profile_id
+        if active:
+            for p in self._cfg.profiles:
+                if p.id == active:
+                    return p
+        return self._cfg.profiles[0]
+
     # --- Recording logic (same as original main.py:301-351) ---
 
-    def _toggle_recording(self) -> None:
+    def _toggle_recording(self, profile_id: str = "") -> None:
 
         if self._cfg is None or self._rec is None:
             return
@@ -308,77 +347,107 @@ class App:
             if self._processing:
                 return
 
+        # If a DIFFERENT profile's hotkey fires while recording, stop the
+        # current recording and immediately start a fresh one for the new
+        # profile. Same-profile hotkey while recording = stop (handled below).
+        if (
+            self._rec.is_recording
+            and profile_id
+            and self._recording_profile_id
+            and profile_id != self._recording_profile_id
+        ):
+            _log(f"toggle_recording: profile switch while recording — "
+                 f"stopping profile={self._recording_profile_id!r}, "
+                 f"starting profile={profile_id!r}")
+            self._stop_recording_and_transcribe(self._recording_profile_id)
+            _log(f"toggle_recording: starting new recording for profile={profile_id!r}")
+            self._start_recording(profile_id)
+            return
+
         if not self._rec.is_recording:
-            # Check mic permission before every recording attempt
-            _log("toggle_recording: checking mic permission")
-            mic_ok = self._check_mic_permission()
-            _log(f"toggle_recording: mic_ok={mic_ok}")
-            if not mic_ok:
-                self._show_mic_denied_dialog()
-                return
-            _log("toggle_recording: starting recording")
-            print(f"Recording... Press {self._cfg.hotkey} to stop.")
-            try:
-                self._rec.start()
-                _log(f"toggle_recording: recording started, device={self._rec.device} sr={self._rec.sample_rate}")
-            except Exception as e:
-                _log(f"toggle_recording: start FAILED: {e}")
-                print(f"Audio input error: {e}", file=sys.stderr)
-                self._notify(f"Audio input error: {e}", "critical")
-                return
-            self._notify("Recording started", "low", persist=True)
-            if self._tray:
-                self._tray.set_state(True)
-            # Schedule early audio check after 1 second to catch silent input
-            if self._root is not None:
-                self._root.after(1000, self._check_early_audio)
-            else:
-                threading.Timer(1.0, self._check_early_audio).start()
+            self._start_recording(profile_id)
         else:
-            print("Stopping, processing...")
-            audio = self._rec.stop()
-            _log(f"toggle_recording: stopped, audio shape={audio.shape}, size={audio.size}")
-            if self._tray:
-                self._tray.set_state(False)
-            self._notify("Transcribing...", "low", persist=True, replace=True)
+            self._stop_recording_and_transcribe(self._recording_profile_id)
 
-            if audio.size == 0:
-                _log("toggle_recording: no audio captured (size=0)")
-                print("No audio captured.")
-                self._notify("No audio captured", "critical", replace=True)
-                return
+    def _start_recording(self, profile_id: str = "") -> None:
+        """Begin a recording, remembering which profile it belongs to."""
+        # Check mic permission before every recording attempt
+        _log("toggle_recording: checking mic permission")
+        mic_ok = self._check_mic_permission()
+        _log(f"toggle_recording: mic_ok={mic_ok}")
+        if not mic_ok:
+            self._show_mic_denied_dialog()
+            return
+        profile = self._resolve_profile(profile_id)
+        self._recording_profile_id = profile.id if profile is not None else profile_id
+        _log(f"toggle_recording: starting recording for profile_id={self._recording_profile_id!r} "
+             f"name={profile.name if profile else '?'!r}")
+        print(f"Recording... Press {self._cfg.hotkey} to stop.")
+        try:
+            self._rec.start()
+            _log(f"toggle_recording: recording started, device={self._rec.device} sr={self._rec.sample_rate}")
+        except Exception as e:
+            _log(f"toggle_recording: start FAILED: {e}")
+            print(f"Audio input error: {e}", file=sys.stderr)
+            self._notify(f"Audio input error: {e}", "critical")
+            return
+        self._notify("Recording started", "low", persist=True)
+        if self._tray:
+            self._tray.set_state(True)
+        # Schedule early audio check after 1 second to catch silent input
+        if self._root is not None:
+            self._root.after(1000, self._check_early_audio)
+        else:
+            threading.Timer(1.0, self._check_early_audio).start()
 
-            # Warn if audio appears silent but still attempt transcription —
-            # some backends (PipeWire/ALSA) deliver low-level data that
-            # transcribes fine despite a low float32 peak
-            peak = float(np.max(np.abs(audio)))
-            _log(f"toggle_recording: peak={peak:.6f}, duration={audio.shape[0]/self._rec.sample_rate:.2f}s")
-            if peak < 0.001:
-                if sys.platform == "darwin":
-                    msg = "Audio may be silent — check microphone permissions"
-                else:
-                    msg = "Audio may be silent — check that your mic is not muted"
-                print(msg, file=sys.stderr)
-                self._notify(msg, "normal")
+    def _stop_recording_and_transcribe(self, profile_id: str = "") -> None:
+        """Stop the current recording and hand audio to the transcribe worker."""
+        print("Stopping, processing...")
+        audio = self._rec.stop()
+        _log(f"toggle_recording: stopped, audio shape={audio.shape}, size={audio.size} "
+             f"profile_id={profile_id!r}")
+        self._recording_profile_id = ""
+        if self._tray:
+            self._tray.set_state(False)
+        self._notify("Transcribing...", "low", persist=True, replace=True)
 
-            duration = audio.shape[0] / self._rec.sample_rate
-            if duration < MIN_DURATION_SECS:
-                print(f"Recording too short ({duration:.1f}s), skipping.")
-                self._notify("Recording too short", "low", replace=True)
-                return
-            if duration > WARN_DURATION_SECS:
-                print(f"Warning: long recording ({duration:.0f}s), upload may be slow.", file=sys.stderr)
+        if audio.size == 0:
+            _log("toggle_recording: no audio captured (size=0)")
+            print("No audio captured.")
+            self._notify("No audio captured", "critical", replace=True)
+            return
 
-            with self._processing_lock:
-                self._processing = True
-            # Run transcription in a worker thread
-            sample_rate = self._rec.sample_rate
-            thread = threading.Thread(
-                target=self._transcribe_worker,
-                args=(audio, sample_rate),
-                daemon=True,
-            )
-            thread.start()
+        # Warn if audio appears silent but still attempt transcription —
+        # some backends (PipeWire/ALSA) deliver low-level data that
+        # transcribes fine despite a low float32 peak
+        peak = float(np.max(np.abs(audio)))
+        _log(f"toggle_recording: peak={peak:.6f}, duration={audio.shape[0]/self._rec.sample_rate:.2f}s")
+        if peak < 0.001:
+            if sys.platform == "darwin":
+                msg = "Audio may be silent — check microphone permissions"
+            else:
+                msg = "Audio may be silent — check that your mic is not muted"
+            print(msg, file=sys.stderr)
+            self._notify(msg, "normal")
+
+        duration = audio.shape[0] / self._rec.sample_rate
+        if duration < MIN_DURATION_SECS:
+            print(f"Recording too short ({duration:.1f}s), skipping.")
+            self._notify("Recording too short", "low", replace=True)
+            return
+        if duration > WARN_DURATION_SECS:
+            print(f"Warning: long recording ({duration:.0f}s), upload may be slow.", file=sys.stderr)
+
+        with self._processing_lock:
+            self._processing = True
+        # Run transcription in a worker thread
+        sample_rate = self._rec.sample_rate
+        thread = threading.Thread(
+            target=self._transcribe_worker,
+            args=(audio, sample_rate, profile_id),
+            daemon=True,
+        )
+        thread.start()
 
     def _check_early_audio(self) -> None:
         """Check audio level after 1s of recording and warn if silent."""
@@ -395,10 +464,27 @@ class App:
             print(msg, file=sys.stderr)
             self._notify(msg, "normal", replace=True)
 
-    def _transcribe_worker(self, audio: np.ndarray, sample_rate: int) -> None:
-        """Run transcription in a background thread and post result back."""
+    def _transcribe_worker(self, audio: np.ndarray, sample_rate: int, profile_id: str = "") -> None:
+        """Run transcription in a background thread and post result back.
+
+        Uses the resolved profile's models + system prompt by overriding the
+        relevant fields on a shallow copy of the config.
+        """
         try:
-            text = transcribe(self._cfg, audio, sample_rate).strip()
+            cfg = self._cfg
+            profile = self._resolve_profile(profile_id)
+            if profile is not None:
+                _log(f"transcribe_worker: profile id={profile.id!r} name={profile.name!r} "
+                     f"asr={profile.asr_model!r} format={profile.format_model!r}")
+                cfg = dataclasses.replace(
+                    self._cfg,
+                    asr_model=profile.asr_model,
+                    format_model=profile.format_model or self._cfg.model,
+                    system_prompt=profile.system_prompt or self._cfg.system_prompt,
+                )
+            else:
+                _log("transcribe_worker: no profile resolved, using top-level config")
+            text = transcribe(cfg, audio, sample_rate).strip()
             self._msg_queue.put(("transcription_done", text))
         except Exception as e:
             self._msg_queue.put(("transcription_error", str(e)))
@@ -461,15 +547,17 @@ class App:
 
         def on_settings_save(cfg: Config) -> None:
             self._settings_win = None
-            old_hotkey = self._cfg.hotkey if self._cfg else None
             self._cfg = cfg
 
             # Update autostart
             from .autostart import set_autostart
             set_autostart(cfg.auto_start)
 
-            # Update hotkey if changed
-            if self._hotkeys and old_hotkey != cfg.hotkey:
+            # Re-register all profile hotkeys (covers added/removed/changed
+            # profiles and the default profile's hotkey).
+            if self._hotkeys is not None and cfg.profiles:
+                self._register_profile_hotkeys()
+            elif self._hotkeys is not None:
                 try:
                     self._hotkeys.update_hotkey(cfg.hotkey)
                 except ValueError as e:
@@ -634,6 +722,9 @@ class App:
         )
         self._hotkeys.start()
         _log(f"run_headless: hotkey listener started, type={type(self._hotkeys).__name__}")
+
+        # Register all per-keybind profiles so each profile's hotkey works.
+        self._register_profile_hotkeys()
 
         # Check for updates in the background
         threading.Thread(target=self._check_for_update, daemon=True).start()
