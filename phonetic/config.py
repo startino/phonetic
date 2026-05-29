@@ -20,12 +20,19 @@ class Config:
     notify: bool
     system_prompt: str
     auto_start: bool = False
+    # Two-stage pipeline: when asr_model is set, transcription runs ASR then
+    # formatting. When blank, the legacy single multimodal call is used.
+    asr_model: str = ""
+    format_model: str = ""
 
     # Fields that are auto-detected and never saved
     _AUTO_FIELDS: ClassVar[set[str]] = {"sample_rate", "channels", "device"}
 
     # Fields to persist
-    _SAVE_FIELDS: ClassVar[set[str]] = {"openrouter_api_key", "model", "hotkey", "notify", "system_prompt", "auto_start"}
+    _SAVE_FIELDS: ClassVar[set[str]] = {
+        "openrouter_api_key", "model", "hotkey", "notify", "system_prompt",
+        "auto_start", "asr_model", "format_model",
+    }
 
     _FIELD_ENV_MAP: ClassVar[dict[str, str]] = {
         "openrouter_api_key": "OPENROUTER_API_KEY",
@@ -34,6 +41,8 @@ class Config:
         "notify": "NOTIFY",
         "system_prompt": "SYSTEM_PROMPT",
         "auto_start": "AUTO_START",
+        "asr_model": "ASR_MODEL",
+        "format_model": "FORMAT_MODEL",
     }
 
 
@@ -115,6 +124,12 @@ def load_config(require_key: bool = True) -> Optional[Config]:
 
     default_hotkey = "<cmd>+<shift>+r" if sys.platform == "darwin" else "<ctrl>+<alt>+r"
 
+    asr_model = os.getenv("ASR_MODEL", "").strip()
+    format_model = (
+        os.getenv("FORMAT_MODEL", "").strip()
+        or os.getenv("MODEL", DEFAULT_MODEL).strip()
+    )
+
     return Config(
         openrouter_api_key=api_key,
         model=os.getenv("MODEL", DEFAULT_MODEL).strip(),
@@ -125,6 +140,8 @@ def load_config(require_key: bool = True) -> Optional[Config]:
         notify=os.getenv("NOTIFY", "1").strip() not in {"0", "false", "no"},
         system_prompt=os.getenv("SYSTEM_PROMPT", "").strip() or DEFAULT_SYSTEM_PROMPT,
         auto_start=os.getenv("AUTO_START", "0").strip() not in {"0", "false", "no"},
+        asr_model=asr_model,
+        format_model=format_model,
     )
 
 
@@ -146,6 +163,13 @@ OPENROUTER_API_KEY={_quote(cfg.openrouter_api_key)}
 
 # Model to use for transcription (OpenRouter model ID)
 MODEL={_quote(cfg.model)}
+
+# ASR model for two-stage pipeline. Blank = legacy single multimodal call.
+# Example: nvidia/parakeet-tdt-0.6b-v3
+ASR_MODEL={_quote(cfg.asr_model)}
+
+# Formatting model for two-stage pipeline. Blank = falls back to MODEL.
+FORMAT_MODEL={_quote(cfg.format_model)}
 
 # Hotkey (pynput format; on Wayland also supports SIGUSR1)
 HOTKEY={_quote(cfg.hotkey)}
