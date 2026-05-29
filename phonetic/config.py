@@ -1,12 +1,52 @@
+import json
 import os
 import sys
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Optional
 
 from dotenv import load_dotenv
 
 from .constants import DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
+
+# Deterministic, stable id for the synthesized default profile so it stays the
+# same across loads even before profiles.json exists.
+DEFAULT_PROFILE_ID = str(uuid.uuid5(uuid.NAMESPACE_DNS, "phonetic-default-profile"))
+
+
+@dataclass
+class Profile:
+    """A named keybind profile: its own hotkey, models, and system prompt."""
+
+    id: str
+    name: str
+    hotkey: str
+    asr_model: str = ""
+    format_model: str = ""
+    system_prompt: str = ""
+
+
+def _profile_to_dict(p: Profile) -> dict:
+    return {
+        "id": p.id,
+        "name": p.name,
+        "hotkey": p.hotkey,
+        "asr_model": p.asr_model,
+        "format_model": p.format_model,
+        "system_prompt": p.system_prompt,
+    }
+
+
+def _profile_from_dict(d: dict) -> Profile:
+    return Profile(
+        id=str(d.get("id") or uuid.uuid4()),
+        name=str(d.get("name", "")),
+        hotkey=str(d.get("hotkey", "")),
+        asr_model=str(d.get("asr_model", "")),
+        format_model=str(d.get("format_model", "")),
+        system_prompt=str(d.get("system_prompt", "")),
+    )
 
 
 @dataclass
@@ -24,6 +64,10 @@ class Config:
     # formatting. When blank, the legacy single multimodal call is used.
     asr_model: str = ""
     format_model: str = ""
+    # Per-keybind profiles, persisted to a sidecar profiles.json (NOT env).
+    # The default profile mirrors the top-level fields for backward compat.
+    profiles: list[Profile] = field(default_factory=list)
+    active_profile_id: str = ""
 
     # Fields that are auto-detected and never saved
     _AUTO_FIELDS: ClassVar[set[str]] = {"sample_rate", "channels", "device"}
@@ -61,6 +105,54 @@ def _config_dir() -> Path:
 def _config_path() -> Path:
     """Return path to the config.env file."""
     return _config_dir() / "config.env"
+
+
+def _profiles_path() -> Path:
+    """Return path to the sidecar profiles.json file."""
+    return _config_dir() / "profiles.json"
+
+
+def _synthesize_default_profile(cfg: Config) -> Profile:
+    """Build the default profile from the existing top-level config fields."""
+    return Profile(
+        id=DEFAULT_PROFILE_ID,
+        name="Default",
+        hotkey=cfg.hotkey,
+        asr_model=cfg.asr_model,
+        format_model=cfg.format_model,
+        system_prompt=cfg.system_prompt,
+    )
+
+
+def _apply_profiles(cfg: Config) -> None:
+    """Populate cfg.profiles / active_profile_id from profiles.json.
+
+    If no profiles exist on disk, synthesize one default profile from the
+    top-level fields so behavior is identical for pre-profiles users.
+    """
+    path = _profiles_path()
+    profiles: list[Profile] = []
+    active_id = ""
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            profiles = [_profile_from_dict(d) for d in data.get("profiles", [])]
+            active_id = str(data.get("active_profile_id", "") or "")
+        except Exception as e:
+            print(f"[config] Could not read profiles.json: {e}", file=sys.stderr)
+            profiles = []
+            active_id = ""
+
+    if not profiles:
+        default = _synthesize_default_profile(cfg)
+        profiles = [default]
+        active_id = default.id
+
+    if not active_id or not any(p.id == active_id for p in profiles):
+        active_id = profiles[0].id
+
+    cfg.profiles = profiles
+    cfg.active_profile_id = active_id
 
 
 def config_file_path() -> Path:
@@ -130,7 +222,7 @@ def load_config(require_key: bool = True) -> Optional[Config]:
         or os.getenv("MODEL", DEFAULT_MODEL).strip()
     )
 
-    return Config(
+    cfg = Config(
         openrouter_api_key=api_key,
         model=os.getenv("MODEL", DEFAULT_MODEL).strip(),
         hotkey=os.getenv("HOTKEY", default_hotkey).strip(),
@@ -143,6 +235,10 @@ def load_config(require_key: bool = True) -> Optional[Config]:
         asr_model=asr_model,
         format_model=format_model,
     )
+
+    # Load (or synthesize) per-keybind profiles from the sidecar JSON.
+    _apply_profiles(cfg)
+    return cfg
 
 
 def _format_config_env(cfg: Config) -> str:
@@ -185,9 +281,28 @@ SYSTEM_PROMPT={_quote(cfg.system_prompt)}
 """
 
 
+def _format_profiles_json(cfg: Config) -> str:
+    """Serialize profiles + active id to JSON text."""
+    return json.dumps(
+        {
+            "profiles": [_profile_to_dict(p) for p in cfg.profiles],
+            "active_profile_id": cfg.active_profile_id,
+        },
+        indent=2,
+    )
+
+
 def save_config(cfg: Config) -> Path:
-    """Save config fields to the platform config path. Returns the path written."""
+    """Save config to the platform config path.
+
+    Writes both config.env (top-level fields, mirroring the default profile
+    for backward compat) and the sidecar profiles.json. Returns the config.env
+    path written.
+    """
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_format_config_env(cfg), encoding="utf-8")
+
+    if cfg.profiles:
+        _profiles_path().write_text(_format_profiles_json(cfg), encoding="utf-8")
     return path

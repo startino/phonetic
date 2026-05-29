@@ -146,6 +146,10 @@ class _CarbonHotkeyManager:
         self._required_mods, self._target_vk = _parse_hotkey(hotkey)
         self._callback_fire_count = 0
         self._heartbeat_count = 0
+        # Per-profile registrations: {hkid: (profile_id, hotkey_ref)}.
+        # Empty in single-hotkey mode; populated by update_hotkeys().
+        self._profile_refs: dict[int, tuple[str, object]] = {}
+        self._on_toggle_for_profile: Optional[Callable[[str], None]] = None
 
     def start(self) -> None:
         from .log import log
@@ -224,12 +228,23 @@ class _CarbonHotkeyManager:
                     log(f"carbon_hotkey:   decoded sig=0x{sig:08x} hkid={hkid}")
                     log(f"carbon_hotkey:   expected sig=0x{PHON:08x} hkid={HOT_KEY_ID}")
 
-                    if sig == PHON and hkid == HOT_KEY_ID:
+                    if sig != PHON:
+                        log("carbon_hotkey: signature MISMATCH, ignoring event")
+                        return 0
+
+                    # Profile mode: dispatch by hkid to the per-profile callback.
+                    profile_entry = manager_self._profile_refs.get(hkid)
+                    if profile_entry is not None and manager_self._on_toggle_for_profile is not None:
+                        profile_id = profile_entry[0]
+                        log(f"carbon_hotkey: *** PROFILE HOTKEY FIRED hkid={hkid} profile_id={profile_id!r} ***")
+                        manager_self._on_toggle_for_profile(profile_id)
+                        log("carbon_hotkey: on_toggle_for_profile returned")
+                    elif hkid == HOT_KEY_ID:
                         log("carbon_hotkey: *** HOTKEY FIRED — calling on_toggle ***")
                         on_toggle()
                         log("carbon_hotkey: on_toggle returned")
                     else:
-                        log(f"carbon_hotkey: sig/hkid MISMATCH, ignoring event")
+                        log(f"carbon_hotkey: hkid {hkid} not registered, ignoring event")
                 except Exception as exc:
                     log(f"carbon_hotkey: EXCEPTION in callback: {exc}")
                     import traceback
@@ -327,6 +342,19 @@ class _CarbonHotkeyManager:
             self._hotkey_ref = None
         else:
             log("carbon_hotkey: stop() — no hotkey_ref to unregister")
+        # Unregister any per-profile refs as well.
+        if self._profile_refs:
+            try:
+                from quickmachotkey._MinimalHIToolbox import UnregisterEventHotKey
+                for hkid, (pid, ref) in list(self._profile_refs.items()):
+                    try:
+                        UnregisterEventHotKey(ref)
+                        log(f"carbon_hotkey: stop() unregistered profile hkid={hkid} profile_id={pid!r}")
+                    except Exception as exc:
+                        log(f"carbon_hotkey: stop() profile unregister error (hkid={hkid}): {exc}")
+            except Exception as exc:
+                log(f"carbon_hotkey: stop() profile import error: {exc}")
+            self._profile_refs = {}
 
     def update_hotkey(self, new_hotkey: str) -> None:
         """Update the hotkey — unregister old, re-register new."""
@@ -379,6 +407,75 @@ class _CarbonHotkeyManager:
             log(f"carbon_hotkey: re-register EXCEPTION: {exc}")
             import traceback
             log(f"carbon_hotkey: traceback: {traceback.format_exc()}")
+
+    def update_hotkeys(self, profiles, on_toggle_for_profile: Callable[[str], None]) -> None:
+        """Register one hotkey per profile, dispatching by profile id.
+
+        Unregisters all existing hotkey refs (single + per-profile) and
+        registers each profile with a sequential HOT_KEY_ID. The shared PHON
+        signature and the single InstallEventHandler stay in place.
+        """
+        from .log import log
+        from struct import unpack
+
+        log(f"carbon_hotkey: update_hotkeys() — {len(profiles)} profile(s)")
+        self._on_toggle_for_profile = on_toggle_for_profile
+
+        try:
+            from quickmachotkey._MinimalHIToolbox import (
+                GetEventDispatcherTarget,
+                RegisterEventHotKey,
+                UnregisterEventHotKey,
+            )
+        except Exception as exc:
+            log(f"carbon_hotkey: update_hotkeys import EXCEPTION: {exc}")
+            return
+
+        # Unregister the single-hotkey ref if present.
+        if self._hotkey_ref is not None:
+            try:
+                UnregisterEventHotKey(self._hotkey_ref)
+                log("carbon_hotkey: unregistered single hotkey ref")
+            except Exception as exc:
+                log(f"carbon_hotkey: single ref unregister error: {exc}")
+            self._hotkey_ref = None
+
+        # Unregister all previous per-profile refs.
+        for hkid, (pid, ref) in list(self._profile_refs.items()):
+            try:
+                UnregisterEventHotKey(ref)
+                log(f"carbon_hotkey: unregistered profile ref hkid={hkid} profile_id={pid!r}")
+            except Exception as exc:
+                log(f"carbon_hotkey: profile ref unregister error (hkid={hkid}): {exc}")
+        self._profile_refs = {}
+
+        PHON = unpack("@I", b"PHON")[0]
+        target = GetEventDispatcherTarget()
+
+        for idx, profile in enumerate(profiles, start=1):
+            required_mods, target_vk = _parse_hotkey(profile.hotkey)
+            if target_vk is None:
+                log(f"carbon_hotkey: profile {profile.id!r} hotkey {profile.hotkey!r} has no vk, skipping")
+                continue
+            modifier_mask = 0
+            for mod in required_mods:
+                modifier_mask |= _MOD_TO_CARBON.get(mod, 0)
+            hkid = idx
+            hotkey_id = (PHON, hkid)
+            log(f"carbon_hotkey: RegisterEventHotKey profile_id={profile.id!r} "
+                f"hotkey={profile.hotkey!r} hkid={hkid} vk={target_vk} mods=0x{modifier_mask:04x}")
+            try:
+                result, hotkey_ref = RegisterEventHotKey(
+                    target_vk, modifier_mask, hotkey_id, target, 0, None,
+                )
+            except Exception as exc:
+                log(f"carbon_hotkey: RegisterEventHotKey EXCEPTION for {profile.id!r}: {exc}")
+                continue
+            if result == 0:
+                self._profile_refs[hkid] = (profile.id, hotkey_ref)
+                log(f"carbon_hotkey: registered profile_id={profile.id!r} hkid={hkid}")
+            else:
+                log(f"carbon_hotkey: FAILED to register profile {profile.id!r} (OSStatus={result})")
 
 
 class _PynputHotkeyManager(_PidFileMixin):
@@ -453,6 +550,38 @@ class _PynputHotkeyManager(_PidFileMixin):
         self._hotkey = new_hotkey
         self._required_mods, self._target_vk = _parse_hotkey(new_hotkey)
 
+    def update_hotkeys(self, profiles, on_toggle_for_profile: Callable[[str], None]) -> None:
+        """Rebuild a single GlobalHotKeys listener mapping each profile's
+        hotkey to a per-profile callback. Stops the one existing listener and
+        starts exactly ONE replacement — never one listener per profile."""
+        from .log import log
+
+        kb = _load_pynput()
+        if kb is None:
+            log("hotkey: update_hotkeys — pynput unavailable, no-op")
+            return
+
+        mapping = {}
+        for p in profiles:
+            if validate_hotkey(p.hotkey):
+                log(f"hotkey: update_hotkeys — invalid hotkey {p.hotkey!r} for profile {p.id!r}, skipping")
+                continue
+            mapping[p.hotkey] = (lambda pid=p.id: on_toggle_for_profile(pid))
+            log(f"hotkey: update_hotkeys — mapping {p.hotkey!r} -> profile {p.id!r}")
+
+        # Stop the single existing listener before starting the replacement.
+        if self._listener is not None:
+            try:
+                self._listener.stop()
+            except Exception as exc:
+                log(f"hotkey: update_hotkeys — error stopping old listener: {exc}")
+            self._listener = None
+
+        self._listener = kb.GlobalHotKeys(mapping)
+        self._listener.daemon = True
+        self._listener.start()
+        log(f"hotkey: update_hotkeys — started ONE GlobalHotKeys listener with {len(mapping)} hotkey(s)")
+
 
 class _SignalOnlyHotkeyManager(_PidFileMixin):
     """SIGUSR1-only hotkey manager for Wayland or when pynput is unavailable."""
@@ -471,6 +600,16 @@ class _SignalOnlyHotkeyManager(_PidFileMixin):
 
     def update_hotkey(self, new_hotkey: str) -> None:
         self._hotkey = new_hotkey
+
+    def update_hotkeys(self, profiles, on_toggle_for_profile: Callable[[str], None]) -> None:
+        """No-op for Wayland/SIGUSR1: per-profile hotkeys are unsupported.
+
+        SIGUSR1 triggers the active/default profile only. We keep the existing
+        single on_toggle wired up via _setup_sigusr1() in start()."""
+        from .log import log
+        log("signal_only: update_hotkeys — per-profile hotkeys unsupported on "
+            "Wayland/SIGUSR1; SIGUSR1 triggers the active/default profile only "
+            f"({len(profiles)} profile(s) ignored)")
 
 
 def HotkeyManager(hotkey: str, on_toggle: Callable[[], None]):

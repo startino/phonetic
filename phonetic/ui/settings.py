@@ -5,7 +5,12 @@ from typing import Optional, Callable
 
 import customtkinter as ctk
 
-from ..config import Config, save_config
+from ..config import (
+    Config,
+    DEFAULT_PROFILE_ID,
+    Profile,
+    save_config,
+)
 from ..constants import DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
 
 
@@ -27,8 +32,16 @@ class SettingsWindow(ctk.CTkToplevel):
         self._on_hotkey_change = on_hotkey_change
         self._cancelled = False
 
+        # Working copy of profiles for the (non-first-run) profile editor.
+        self._profiles: list[Profile] = (
+            [Profile(**vars(p)) for p in config.profiles]
+            if (config and config.profiles) else []
+        )
+        self._active_profile_id: str = config.active_profile_id if config else ""
+        self._selected_index: int = 0
+
         self.title("Phonetic — First Run Setup" if first_run else "Phonetic — Settings")
-        self.geometry("500x580")
+        self.geometry("520x680" if not first_run else "500x580")
         self.resizable(False, True)
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
@@ -79,35 +92,40 @@ class SettingsWindow(ctk.CTkToplevel):
         self._toggle_btn = ctk.CTkButton(key_frame, text="Show", width=60, command=self._toggle_key_visibility)
         self._toggle_btn.pack(side="right", padx=(8, 0))
 
-        # Model
-        ctk.CTkLabel(self, text="Model", anchor="w").pack(fill="x", **pad)
-        self._model_var = ctk.StringVar(
-            value=self._config.model if self._config else DEFAULT_MODEL
-        )
-        ctk.CTkEntry(self, textvariable=self._model_var).pack(fill="x", padx=16, pady=(0, 4))
-
-        # Hotkey
         default_hotkey = "<cmd>+<shift>+r" if sys.platform == "darwin" else "<ctrl>+<alt>+r"
-        ctk.CTkLabel(self, text="Hotkey", anchor="w").pack(fill="x", **pad)
-        self._hotkey_var = ctk.StringVar(
-            value=self._config.hotkey if self._config else default_hotkey
-        )
-        hotkey_frame = ctk.CTkFrame(self, fg_color="transparent")
-        hotkey_frame.pack(fill="x", padx=16, pady=(0, 4))
-        self._hotkey_entry = ctk.CTkEntry(hotkey_frame, textvariable=self._hotkey_var)
-        self._hotkey_entry.pack(side="left", fill="x", expand=True)
-        self._record_btn = ctk.CTkButton(hotkey_frame, text="Record", width=80, command=self._toggle_hotkey_record)
-        self._record_btn.pack(side="right", padx=(8, 0))
-        self._hotkey_status = ctk.CTkLabel(
-            self,
-            text="Press your hotkey anywhere to verify it works",
-            font=ctk.CTkFont(size=12),
-            text_color=("gray40", "gray60"),
-            anchor="w",
-        )
-        self._hotkey_status.pack(fill="x", padx=16, pady=(0, 0))
         self._recording = False
         self._held_modifiers: set[str] = set()
+
+        if self._first_run:
+            # Simple first-run: one model + one hotkey. The default profile is
+            # synthesized from these on save.
+            ctk.CTkLabel(self, text="Model", anchor="w").pack(fill="x", **pad)
+            self._model_var = ctk.StringVar(
+                value=self._config.model if self._config else DEFAULT_MODEL
+            )
+            ctk.CTkEntry(self, textvariable=self._model_var).pack(fill="x", padx=16, pady=(0, 4))
+
+            ctk.CTkLabel(self, text="Hotkey", anchor="w").pack(fill="x", **pad)
+            self._hotkey_var = ctk.StringVar(
+                value=self._config.hotkey if self._config else default_hotkey
+            )
+            hotkey_frame = ctk.CTkFrame(self, fg_color="transparent")
+            hotkey_frame.pack(fill="x", padx=16, pady=(0, 4))
+            self._hotkey_entry = ctk.CTkEntry(hotkey_frame, textvariable=self._hotkey_var)
+            self._hotkey_entry.pack(side="left", fill="x", expand=True)
+            self._record_btn = ctk.CTkButton(hotkey_frame, text="Record", width=80, command=self._toggle_hotkey_record)
+            self._record_btn.pack(side="right", padx=(8, 0))
+            self._hotkey_status = ctk.CTkLabel(
+                self,
+                text="Press your hotkey anywhere to verify it works",
+                font=ctk.CTkFont(size=12),
+                text_color=("gray40", "gray60"),
+                anchor="w",
+            )
+            self._hotkey_status.pack(fill="x", padx=16, pady=(0, 0))
+        else:
+            # Settings mode: per-keybind profile management.
+            self._build_profiles_section(pad, default_hotkey)
 
         # Wayland setup section: interactive SIGUSR1 command + AI prompt copy
         if sys.platform.startswith("linux"):
@@ -126,27 +144,6 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkCheckBox(self, text="Start at login", variable=self._autostart_var).pack(
             anchor="w", padx=16, pady=(4, 8)
         )
-
-        # Advanced section (hidden in first-run)
-        if not self._first_run:
-            self._advanced_frame = ctk.CTkFrame(self, fg_color="transparent")
-            self._advanced_visible = False
-            self._advanced_toggle = ctk.CTkButton(
-                self, text="Advanced \u25b6", width=100,
-                fg_color="transparent", text_color=("gray10", "gray90"),
-                hover_color=("gray80", "gray30"),
-                command=self._toggle_advanced,
-            )
-            self._advanced_toggle.pack(anchor="w", padx=16, pady=(4, 0))
-
-            ctk.CTkLabel(self._advanced_frame, text="System Prompt", anchor="w").pack(
-                fill="x", padx=0, pady=(4, 4)
-            )
-            self._prompt_text = ctk.CTkTextbox(self._advanced_frame, height=120)
-            self._prompt_text.pack(fill="both", expand=True, padx=0, pady=(0, 4))
-            self._prompt_text.insert("1.0", self._config.system_prompt if self._config else DEFAULT_SYSTEM_PROMPT)
-        else:
-            self._advanced_frame = None
 
         # Buttons
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -170,7 +167,9 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(
             frame,
             text="On Wayland, Phonetic uses SIGUSR1 for hotkey toggling.\n"
-                 "Bind this command in your DE's keyboard settings:",
+                 "Bind this command in your DE's keyboard settings:\n"
+                 "Note: per-profile hotkeys need X11 or macOS; on Wayland\n"
+                 "SIGUSR1 triggers the active/default profile only.",
             font=ctk.CTkFont(size=12),
             anchor="w",
             justify="left",
@@ -192,7 +191,7 @@ class SettingsWindow(ctk.CTkToplevel):
             self.clipboard_append(sigusr1_cmd)
 
         def copy_ai_prompt():
-            hotkey = self._hotkey_var.get().strip()
+            hotkey = self._current_hotkey_value()
             prompt = generate_setup_prompt(hotkey)
             self.clipboard_clear()
             self.clipboard_append(prompt)
@@ -205,14 +204,192 @@ class SettingsWindow(ctk.CTkToplevel):
         self._api_key_entry.configure(show="" if self._show_key else "*")
         self._toggle_btn.configure(text="Hide" if self._show_key else "Show")
 
-    def _toggle_advanced(self) -> None:
-        if self._advanced_visible:
-            self._advanced_frame.pack_forget()
-            self._advanced_toggle.configure(text="Advanced \u25b6")
-        else:
-            self._advanced_frame.pack(fill="both", expand=True, padx=16, pady=(0, 4))
-            self._advanced_toggle.configure(text="Advanced \u25bc")
-        self._advanced_visible = not self._advanced_visible
+    # -- Profile management (settings mode only) ---------------------------
+
+    def _current_hotkey_value(self) -> str:
+        """Return the hotkey string currently relevant for the open window."""
+        if self._first_run:
+            return self._hotkey_var.get().strip()
+        return self._hotkey_var.get().strip() if hasattr(self, "_hotkey_var") else ""
+
+    def _build_profiles_section(self, pad: dict, default_hotkey: str) -> None:
+        """Build the per-keybind profile manager: list + editor panel."""
+        ctk.CTkLabel(
+            self, text="Profiles",
+            font=ctk.CTkFont(size=14, weight="bold"), anchor="w",
+        ).pack(fill="x", **pad)
+
+        # Scrollable list of profiles.
+        self._profile_list = ctk.CTkScrollableFrame(self, height=90)
+        self._profile_list.pack(fill="x", padx=16, pady=(0, 4))
+
+        # Add / Delete buttons.
+        list_btns = ctk.CTkFrame(self, fg_color="transparent")
+        list_btns.pack(fill="x", padx=16, pady=(0, 4))
+        ctk.CTkButton(list_btns, text="Add Profile", width=110, command=self._add_profile).pack(side="left")
+        self._delete_btn = ctk.CTkButton(
+            list_btns, text="Delete Profile", width=120, command=self._delete_profile,
+        )
+        self._delete_btn.pack(side="left", padx=(8, 0))
+
+        # Editor panel for the selected profile.
+        editor = ctk.CTkFrame(self)
+        editor.pack(fill="x", padx=16, pady=(4, 4))
+
+        ctk.CTkLabel(editor, text="Name", anchor="w").pack(fill="x", padx=12, pady=(8, 0))
+        self._name_var = ctk.StringVar()
+        ctk.CTkEntry(editor, textvariable=self._name_var).pack(fill="x", padx=12, pady=(0, 4))
+        self._name_var.trace_add("write", lambda *_: self._on_field_edit("name", self._name_var.get()))
+
+        ctk.CTkLabel(editor, text="Hotkey", anchor="w").pack(fill="x", padx=12, pady=(4, 0))
+        self._hotkey_var = ctk.StringVar()
+        hotkey_frame = ctk.CTkFrame(editor, fg_color="transparent")
+        hotkey_frame.pack(fill="x", padx=12, pady=(0, 4))
+        self._hotkey_entry = ctk.CTkEntry(hotkey_frame, textvariable=self._hotkey_var)
+        self._hotkey_entry.pack(side="left", fill="x", expand=True)
+        self._record_btn = ctk.CTkButton(hotkey_frame, text="Record", width=80, command=self._toggle_hotkey_record)
+        self._record_btn.pack(side="right", padx=(8, 0))
+        self._hotkey_var.trace_add("write", lambda *_: self._on_field_edit("hotkey", self._hotkey_var.get()))
+        self._hotkey_status = ctk.CTkLabel(
+            editor,
+            text="Press your hotkey anywhere to verify it works",
+            font=ctk.CTkFont(size=12), text_color=("gray40", "gray60"), anchor="w",
+        )
+        self._hotkey_status.pack(fill="x", padx=12, pady=(0, 4))
+
+        ctk.CTkLabel(editor, text="ASR Model", anchor="w").pack(fill="x", padx=12, pady=(4, 0))
+        self._asr_var = ctk.StringVar()
+        self._asr_entry = ctk.CTkEntry(
+            editor, textvariable=self._asr_var,
+            placeholder_text="nvidia/parakeet-tdt-0.6b-v3 or leave blank",
+        )
+        self._asr_entry.pack(fill="x", padx=12, pady=(0, 4))
+        self._asr_var.trace_add("write", lambda *_: self._on_field_edit("asr_model", self._asr_var.get()))
+
+        ctk.CTkLabel(editor, text="Format Model", anchor="w").pack(fill="x", padx=12, pady=(4, 0))
+        self._format_var = ctk.StringVar()
+        self._format_entry = ctk.CTkEntry(
+            editor, textvariable=self._format_var,
+            placeholder_text="openai/gpt-4o or similar",
+        )
+        self._format_entry.pack(fill="x", padx=12, pady=(0, 4))
+        self._format_var.trace_add("write", lambda *_: self._on_field_edit("format_model", self._format_var.get()))
+
+        ctk.CTkLabel(editor, text="System Prompt", anchor="w").pack(fill="x", padx=12, pady=(4, 0))
+        self._prompt_text = ctk.CTkTextbox(editor, height=100)
+        self._prompt_text.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        self._prompt_text.bind("<KeyRelease>", lambda _e: self._on_prompt_edit())
+
+        # Ensure at least one profile exists to edit.
+        if not self._profiles:
+            self._profiles = [Profile(
+                id=DEFAULT_PROFILE_ID, name="Default", hotkey=default_hotkey,
+                asr_model=self._config.asr_model if self._config else "",
+                format_model=self._config.format_model if self._config else "",
+                system_prompt=self._config.system_prompt if self._config else DEFAULT_SYSTEM_PROMPT,
+            )]
+            self._active_profile_id = DEFAULT_PROFILE_ID
+        if not self._active_profile_id:
+            self._active_profile_id = self._profiles[0].id
+
+        self._selected_index = 0
+        self._refresh_profile_list()
+        self._load_profile_into_editor(0)
+
+    def _is_default_profile(self, profile: Profile) -> bool:
+        return profile.id == DEFAULT_PROFILE_ID
+
+    def _refresh_profile_list(self) -> None:
+        """Redraw the profile list rows and the Delete button state."""
+        for child in self._profile_list.winfo_children():
+            child.destroy()
+        for idx, p in enumerate(self._profiles):
+            selected = idx == self._selected_index
+            summary = p.asr_model or "single-call"
+            label = f"{p.name or '(unnamed)'}  \u00b7  {p.hotkey or '(no hotkey)'}  \u00b7  {summary}"
+            if self._is_default_profile(p):
+                label += "   [Default]"
+            row = ctk.CTkButton(
+                self._profile_list, text=label, anchor="w",
+                fg_color=("gray75", "gray25") if selected else "transparent",
+                text_color=("gray10", "gray90"),
+                hover_color=("gray70", "gray30"),
+                command=lambda i=idx: self._select_profile(i),
+            )
+            row.pack(fill="x", pady=1)
+        # Delete disabled when only one profile remains.
+        self._delete_btn.configure(state="disabled" if len(self._profiles) <= 1 else "normal")
+
+    def _select_profile(self, index: int) -> None:
+        if not (0 <= index < len(self._profiles)):
+            return
+        self._commit_editor_to_profile()
+        self._selected_index = index
+        self._load_profile_into_editor(index)
+        self._refresh_profile_list()
+
+    def _load_profile_into_editor(self, index: int) -> None:
+        if not (0 <= index < len(self._profiles)):
+            return
+        p = self._profiles[index]
+        self._editor_loading = True
+        self._name_var.set(p.name)
+        self._hotkey_var.set(p.hotkey)
+        self._asr_var.set(p.asr_model)
+        self._format_var.set(p.format_model)
+        self._prompt_text.delete("1.0", "end")
+        self._prompt_text.insert("1.0", p.system_prompt)
+        self._editor_loading = False
+
+    def _commit_editor_to_profile(self) -> None:
+        """Flush the editor widgets into the selected profile object."""
+        if not (0 <= self._selected_index < len(self._profiles)):
+            return
+        p = self._profiles[self._selected_index]
+        p.name = self._name_var.get().strip()
+        p.hotkey = self._hotkey_var.get().strip()
+        p.asr_model = self._asr_var.get().strip()
+        p.format_model = self._format_var.get().strip()
+        p.system_prompt = self._prompt_text.get("1.0", "end").strip()
+
+    def _on_field_edit(self, field_name: str, value: str) -> None:
+        if getattr(self, "_editor_loading", False):
+            return
+        if not (0 <= self._selected_index < len(self._profiles)):
+            return
+        setattr(self._profiles[self._selected_index], field_name, value.strip())
+        if field_name in ("name", "hotkey", "asr_model"):
+            self._refresh_profile_list()
+
+    def _on_prompt_edit(self) -> None:
+        if getattr(self, "_editor_loading", False):
+            return
+        if not (0 <= self._selected_index < len(self._profiles)):
+            return
+        self._profiles[self._selected_index].system_prompt = self._prompt_text.get("1.0", "end").strip()
+
+    def _add_profile(self) -> None:
+        import uuid
+        self._commit_editor_to_profile()
+        new = Profile(
+            id=str(uuid.uuid4()), name=f"Profile {len(self._profiles) + 1}",
+            hotkey="", asr_model="", format_model="",
+            system_prompt=DEFAULT_SYSTEM_PROMPT,
+        )
+        self._profiles.append(new)
+        self._selected_index = len(self._profiles) - 1
+        self._refresh_profile_list()
+        self._load_profile_into_editor(self._selected_index)
+
+    def _delete_profile(self) -> None:
+        if len(self._profiles) <= 1:
+            return
+        removed = self._profiles.pop(self._selected_index)
+        if self._active_profile_id == removed.id:
+            self._active_profile_id = self._profiles[0].id
+        self._selected_index = max(0, self._selected_index - 1)
+        self._refresh_profile_list()
+        self._load_profile_into_editor(self._selected_index)
 
     # -- Hotkey recorder (tkinter key bindings, main-thread safe) ----------
 
@@ -354,31 +531,68 @@ class SettingsWindow(ctk.CTkToplevel):
             self._api_key_entry.configure(border_color="red")
             return
 
-        # Validate hotkey
-        hotkey = self._hotkey_var.get().strip()
-        if hotkey:
-            from ..hotkeys import validate_hotkey
-            error = validate_hotkey(hotkey)
-            if error:
-                from tkinter import messagebox
-                messagebox.showerror("Invalid Hotkey", f"'{hotkey}' is not a valid hotkey.\n\n{error}", parent=self)
-                return
+        from ..hotkeys import validate_hotkey
+        from tkinter import messagebox
 
-        # Build config, preserving auto-detected audio fields
-        system_prompt = DEFAULT_SYSTEM_PROMPT
-        if self._advanced_frame is not None and hasattr(self, "_prompt_text"):
-            system_prompt = self._prompt_text.get("1.0", "end").strip() or DEFAULT_SYSTEM_PROMPT
+        if self._first_run:
+            # Simple wizard: one model + one hotkey → synthesize default profile.
+            hotkey = self._hotkey_var.get().strip()
+            if hotkey:
+                error = validate_hotkey(hotkey)
+                if error:
+                    messagebox.showerror("Invalid Hotkey", f"'{hotkey}' is not a valid hotkey.\n\n{error}", parent=self)
+                    return
+            model = self._model_var.get().strip() or DEFAULT_MODEL
+            default_profile = Profile(
+                id=DEFAULT_PROFILE_ID, name="Default", hotkey=hotkey,
+                asr_model="", format_model="", system_prompt=DEFAULT_SYSTEM_PROMPT,
+            )
+            profiles = [default_profile]
+            active_id = DEFAULT_PROFILE_ID
+            top_hotkey = hotkey
+            top_system_prompt = DEFAULT_SYSTEM_PROMPT
+            top_asr = ""
+            top_format = ""
+        else:
+            # Settings mode: validate and collect all profiles.
+            self._commit_editor_to_profile()
+            profiles = self._profiles
+            for p in profiles:
+                if p.hotkey:
+                    error = validate_hotkey(p.hotkey)
+                    if error:
+                        messagebox.showerror(
+                            "Invalid Hotkey",
+                            f"Profile '{p.name}' has an invalid hotkey '{p.hotkey}'.\n\n{error}",
+                            parent=self,
+                        )
+                        return
+            active_id = self._active_profile_id or (profiles[0].id if profiles else "")
+            model = self._config.model if self._config else DEFAULT_MODEL
+            # Mirror the default profile into the top-level fields for compat.
+            default_profile = next(
+                (p for p in profiles if p.id == DEFAULT_PROFILE_ID),
+                profiles[0] if profiles else None,
+            )
+            top_hotkey = default_profile.hotkey if default_profile else (self._config.hotkey if self._config else "")
+            top_system_prompt = (default_profile.system_prompt if default_profile else DEFAULT_SYSTEM_PROMPT) or DEFAULT_SYSTEM_PROMPT
+            top_asr = default_profile.asr_model if default_profile else ""
+            top_format = default_profile.format_model if default_profile else ""
 
         new_cfg = Config(
             openrouter_api_key=api_key,
-            model=self._model_var.get().strip() or DEFAULT_MODEL,
-            hotkey=self._hotkey_var.get().strip(),
+            model=model,
+            hotkey=top_hotkey,
             sample_rate=self._config.sample_rate if self._config else 48000,
             channels=self._config.channels if self._config else 1,
             device=self._config.device if self._config else None,
             notify=self._notify_var.get(),
-            system_prompt=system_prompt,
+            system_prompt=top_system_prompt,
             auto_start=self._autostart_var.get(),
+            asr_model=top_asr,
+            format_model=top_format or model,
+            profiles=profiles,
+            active_profile_id=active_id,
         )
 
         save_config(new_cfg)
