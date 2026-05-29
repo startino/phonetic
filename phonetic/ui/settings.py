@@ -6,7 +6,7 @@ from typing import Optional, Callable
 import customtkinter as ctk
 
 from ..config import Config, save_config
-from ..constants import DEFAULT_SYSTEM_PROMPT
+from ..constants import DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
 
 
 class SettingsWindow(ctk.CTkToplevel):
@@ -82,7 +82,7 @@ class SettingsWindow(ctk.CTkToplevel):
         # Model
         ctk.CTkLabel(self, text="Model", anchor="w").pack(fill="x", **pad)
         self._model_var = ctk.StringVar(
-            value=self._config.model if self._config else "google/gemini-3-flash-preview"
+            value=self._config.model if self._config else DEFAULT_MODEL
         )
         ctk.CTkEntry(self, textvariable=self._model_var).pack(fill="x", padx=16, pady=(0, 4))
 
@@ -371,7 +371,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         new_cfg = Config(
             openrouter_api_key=api_key,
-            model=self._model_var.get().strip() or "google/gemini-3-flash-preview",
+            model=self._model_var.get().strip() or DEFAULT_MODEL,
             hotkey=self._hotkey_var.get().strip(),
             sample_rate=self._config.sample_rate if self._config else 48000,
             channels=self._config.channels if self._config else 1,

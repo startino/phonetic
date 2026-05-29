@@ -6,7 +6,7 @@ from typing import ClassVar, Optional
 
 from dotenv import load_dotenv
 
-from .constants import DEFAULT_SYSTEM_PROMPT
+from .constants import DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
 
 
 @dataclass
@@ -117,7 +117,7 @@ def load_config(require_key: bool = True) -> Optional[Config]:
 
     return Config(
         openrouter_api_key=api_key,
-        model=os.getenv("MODEL", "google/gemini-3-flash-preview").strip(),
+        model=os.getenv("MODEL", DEFAULT_MODEL).strip(),
         hotkey=os.getenv("HOTKEY", default_hotkey).strip(),
         sample_rate=sample_rate,
         channels=channels,

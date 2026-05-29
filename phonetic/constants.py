@@ -6,5 +6,10 @@ Especially nothing like a correction or telling the user hey this doesn't make s
 Please format it nicely, you know, paragraphs, proper punctuation, proper capitalization. Remove some of the filler if the user says um a lot. Remove corrections, so if the user corrects themselves, then you should remove the first part they said and make it one coherent sentence, as if they said the correct thing just all along. But don't change the wording that the user uses, so only make sure that it's like capitalization, punctuation, new paragraphs, the such, but don't change their words.\
 """
 
+# Default transcription model (OpenRouter model ID). Audio-capable via the
+# `input_audio` content part on chat/completions, honours the system prompt,
+# and is not geo-blocked for HK companies (Google models are).
+DEFAULT_MODEL = "openai/gpt-4o-audio-preview"
+
 MIN_DURATION_SECS = 0.5
 WARN_DURATION_SECS = 300

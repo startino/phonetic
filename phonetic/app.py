@@ -10,7 +10,7 @@ import numpy as np
 from .clipboard import copy_to_clipboard
 from .config import Config, load_config
 from .log import log as _log
-from .constants import MIN_DURATION_SECS, WARN_DURATION_SECS
+from .constants import DEFAULT_MODEL, MIN_DURATION_SECS, WARN_DURATION_SECS
 from .hotkeys import HotkeyManager
 from .notifications import notify
 from .recorder import Recorder
@@ -135,7 +135,7 @@ class App:
         default_hotkey = "<cmd>+<shift>+r" if sys.platform == "darwin" else "<ctrl>+<alt>+r"
         stub_cfg = Config(
             openrouter_api_key="",
-            model="google/gemini-3-flash-preview",
+            model=DEFAULT_MODEL,
             hotkey=default_hotkey,
             sample_rate=sample_rate,
             channels=channels,
