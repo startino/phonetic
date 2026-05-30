@@ -106,3 +106,15 @@ assets/icon.ico
 assets/icon.icns
 assets/icon_recording.png
 assets/icon_tray_recording.png
+
+# Claude Code / harness-local worktrees and scratch
+.claude/
+
+# === STATION MANAGED BEGIN — DO NOT EDIT ===
+# Auto-written by web/src/lib/server/mcp-disk-sync/project-file-syncer.ts
+# Edit at /admin/settings/gitignore — rewrites happen within ~2s of save.
+*.STATION_AUTO_MANAGED_DO_NOT_EDIT.md
+.mcp.json
+.dod-evidence/
+.station/
+# === STATION MANAGED END ===
