@@ -37,18 +37,25 @@ That's it. Sample rate and microphone are auto-detected.
 
 ## Per-keybind profiles
 
-You can configure **multiple keybinds, each with its own models and prompt** — for example, one hotkey that transcribes verbatim, another that cleans up rambling into tight prose, and a third that uses a cheap dedicated ASR model.
+A **profile** binds one hotkey to its own models and prompt. With profiles you can run several hotkeys at once — for example:
 
-A **profile** is a named set of:
+- `Ctrl+Alt+R` → clean, formatted prose (the default)
+- `Ctrl+Alt+V` → **verbatim**, word-for-word with no cleanup
+- `Ctrl+Alt+B` → a cheap dedicated **ASR model** for transcription, then a smart model to summarise into bullet points
 
-- **Hotkey** — the keybind that triggers this profile
-- **ASR model** — optional; when set, transcription runs as a two-stage pipeline (this model does speech-to-text, then the format model rewrites it). Leave blank to use a single multimodal model.
-- **Format model** — the model that formats/cleans the transcript (falls back to the default `MODEL` when blank)
-- **System prompt** — the instruction that shapes the output (verbatim, summarised, bullet points, a different language, etc.)
+Each profile has five fields:
 
-**Configure them in the Settings window** (open it from the tray/menu-bar icon → Settings). Add a profile, give it a name, record its hotkey, set its models and prompt, and save. Press that profile's hotkey to record and transcribe with its settings; press a different profile's hotkey to use that one instead. Your existing single configuration becomes the "Default" profile automatically — nothing changes until you add more.
+| Field | Required | What it does |
+| --- | --- | --- |
+| `name` | yes | Label shown in the Settings window. Free text. |
+| `hotkey` | yes | The key combo that triggers this profile, in **pynput format** (see below). Must be unique across profiles. |
+| `asr_model` | no | When set, transcription becomes **two-stage**: this model does speech-to-text only (e.g. `nvidia/parakeet-tdt-0.6b-v3`), then `format_model` rewrites it. **Leave empty** for the default single-model path. |
+| `format_model` | no | The model that formats/cleans the transcript. Empty → falls back to the top-level `MODEL`. In single-stage mode this is the only model used. |
+| `system_prompt` | no | The instruction that shapes the output (verbatim, summarised, a different language…). Empty → uses the built-in default prompt. |
 
-Profiles are stored in a `profiles.json` file next to your config (so they are **not** an `.env` setting):
+### Where the file lives — and you don't have to start from scratch
+
+Profiles live in a `profiles.json` sidecar next to your config. **Phonetic writes this file automatically on first run**, pre-filled with your current settings as a `Default` profile and with an embedded `_fields` block documenting every key — so you always have a concrete, commented example to copy from. Just open it and edit.
 
 | OS | Location |
 | --- | --- |
@@ -56,9 +63,69 @@ Profiles are stored in a `profiles.json` file next to your config (so they are *
 | Linux | `~/.config/phonetic/profiles.json` |
 | Windows | `%APPDATA%\Phonetic\profiles.json` |
 
-Each entry has `name`, `hotkey`, `asr_model`, `format_model`, and `system_prompt`. The headless `.env` / environment variables describe only the single default keybind; multiple keybinds require the GUI (or editing `profiles.json` directly).
+### Two ways to configure
 
-> Note: on Wayland, global hotkeys go through a single SIGUSR1 signal, so only one keybind fires — per-profile hotkeys need X11/XWayland or macOS. See the Wayland section below.
+1. **Settings window** (easiest) — open it from the tray / menu-bar icon → **Settings**. Add a profile, name it, record its hotkey, set its models and prompt, and save.
+2. **Edit `profiles.json` directly** — change the file with any text editor, then **restart Phonetic** to apply. Add as many entries to the `profiles` array as you like.
+
+Either way, your existing single configuration becomes the `Default` profile automatically — nothing changes until you add more.
+
+### A complete example
+
+This adds two profiles to the auto-generated default: a verbatim hotkey, and a two-stage "bullet points" hotkey using a cheap ASR model. (The `_comment` / `_fields` keys are documentation written by Phonetic; you can leave them in place — the app ignores any key starting with `_`.)
+
+```json
+{
+  "profiles": [
+    {
+      "id": "bb804489-6bd1-58d2-b80d-aaaeef817d07",
+      "name": "Default",
+      "hotkey": "<ctrl>+<alt>+r",
+      "asr_model": "",
+      "format_model": "mistralai/voxtral-small-24b-2507",
+      "system_prompt": ""
+    },
+    {
+      "id": "verbatim",
+      "name": "Verbatim",
+      "hotkey": "<ctrl>+<alt>+v",
+      "asr_model": "",
+      "format_model": "mistralai/voxtral-small-24b-2507",
+      "system_prompt": "Transcribe the audio exactly as spoken, word for word. Do not remove filler words, do not fix grammar, do not reword. Only add basic punctuation."
+    },
+    {
+      "id": "bullets",
+      "name": "Bullet points",
+      "hotkey": "<ctrl>+<alt>+b",
+      "asr_model": "nvidia/parakeet-tdt-0.6b-v3",
+      "format_model": "openai/gpt-4o-mini",
+      "system_prompt": "Rewrite the transcript as a concise bulleted list of the key points. Drop filler and repetition."
+    }
+  ],
+  "active_profile_id": "bb804489-6bd1-58d2-b80d-aaaeef817d07"
+}
+```
+
+Notes:
+- **`id`** must be unique and stable — any string works (the `Default` profile uses a fixed UUID; for your own profiles a short slug like `"verbatim"` is fine). Don't reuse an `id` between profiles.
+- **`active_profile_id`** is the *fallback* profile used when recording is triggered without a hotkey — the tray/menu-bar action and the single Wayland `SIGUSR1` signal. Each profile's own hotkey always uses that profile regardless of this value.
+
+### Hotkey format
+
+Hotkeys use [pynput's notation](https://pynput.readthedocs.io/en/latest/keyboard.html#pynput.keyboard.HotKey.parse): modifiers in angle brackets joined with `+`, e.g.
+
+```
+<ctrl>+<alt>+r     <cmd>+<shift>+r     <ctrl>+<alt>+<space>
+```
+
+Common modifiers: `<ctrl>`, `<alt>`, `<shift>`, `<cmd>` (macOS ⌘ / Windows key). Plain keys are written literally (`r`, `1`, `<space>`). On macOS the default is `<cmd>+<shift>+r`; on Linux/Windows it's `<ctrl>+<alt>+r`.
+
+### Picking models
+
+- **Single-stage (default):** leave `asr_model` empty and set `format_model` to a multimodal model that accepts audio — e.g. `mistralai/voxtral-small-24b-2507` (the default; chosen because OpenRouter geo-blocks OpenAI/Anthropic/Google audio for some billing regions).
+- **Two-stage:** set `asr_model` to a dedicated speech-to-text model (e.g. `nvidia/parakeet-tdt-0.6b-v3`, served at OpenRouter's `/audio/transcriptions` endpoint) and `format_model` to any text model (e.g. `openai/gpt-4o-mini`). This is cheaper and often more accurate for long dictation, at the cost of one extra call.
+
+> **Wayland caveat:** native Wayland exposes only a single global trigger (`SIGUSR1`), so just one hotkey fires there. Multiple per-profile hotkeys need X11/XWayland or macOS. See the [Wayland](#wayland) section below.
 
 ## Run from source
 
