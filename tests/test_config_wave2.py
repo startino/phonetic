@@ -89,3 +89,44 @@ def test_corrupt_profiles_json_synthesizes_default(isolated_config, monkeypatch)
     cfg = load_config(require_key=True)
     assert len(cfg.profiles) == 1
     assert cfg.profiles[0].id == DEFAULT_PROFILE_ID
+
+
+def test_load_materializes_profiles_json_when_missing(isolated_config, monkeypatch):
+    """First load writes a concrete, self-documenting profiles.json to disk."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    monkeypatch.setenv("HOTKEY", "<ctrl>+<alt>+r")
+    assert not _profiles_path().is_file()
+
+    load_config(require_key=True)
+
+    assert _profiles_path().is_file(), "profiles.json should be created on first load"
+    data = json.loads(_profiles_path().read_text(encoding="utf-8"))
+    # Self-documenting help block present and inert.
+    assert "_comment" in data
+    assert set(data["_fields"]) >= {"name", "hotkey", "asr_model",
+                                    "format_model", "system_prompt"}
+    # A real, editable default profile is materialized.
+    assert len(data["profiles"]) == 1
+    default = data["profiles"][0]
+    assert default["id"] == DEFAULT_PROFILE_ID
+    assert default["hotkey"] == "<ctrl>+<alt>+r"
+    assert data["active_profile_id"] == DEFAULT_PROFILE_ID
+
+
+def test_materialized_file_reloads_cleanly(isolated_config, monkeypatch):
+    """The auto-written file (with _comment/_fields) round-trips on reload."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    load_config(require_key=True)  # materializes
+    reloaded = load_config(require_key=True)  # reads it back
+    assert len(reloaded.profiles) == 1
+    assert reloaded.profiles[0].id == DEFAULT_PROFILE_ID
+    assert reloaded.active_profile_id == DEFAULT_PROFILE_ID
+
+
+def test_load_does_not_clobber_corrupt_file(isolated_config, monkeypatch):
+    """A corrupt/in-progress edit is never overwritten by materialization."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    _profiles_path().write_text("{ not valid json", encoding="utf-8")
+    load_config(require_key=True)
+    # The bad content is preserved for the user to fix, not silently replaced.
+    assert _profiles_path().read_text(encoding="utf-8") == "{ not valid json"

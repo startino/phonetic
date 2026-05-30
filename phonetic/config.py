@@ -133,7 +133,8 @@ def _apply_profiles(cfg: Config) -> None:
     path = _profiles_path()
     profiles: list[Profile] = []
     active_id = ""
-    if path.is_file():
+    file_existed = path.is_file()
+    if file_existed:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             profiles = [_profile_from_dict(d) for d in data.get("profiles", [])]
@@ -153,6 +154,17 @@ def _apply_profiles(cfg: Config) -> None:
 
     cfg.profiles = profiles
     cfg.active_profile_id = active_id
+
+    # Materialize a real, self-documenting profiles.json the first time we run
+    # so users have a concrete file to edit instead of a blank slate. Only when
+    # the file is genuinely absent — never clobber an existing (even corrupt)
+    # file, since that could be a user's edit in progress.
+    if not file_existed:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_format_profiles_json(cfg), encoding="utf-8")
+        except OSError as e:
+            print(f"[config] Could not write profiles.json: {e}", file=sys.stderr)
 
 
 def config_file_path() -> Path:
@@ -281,14 +293,63 @@ SYSTEM_PROMPT={_quote(cfg.system_prompt)}
 """
 
 
+# Embedded documentation written at the top of every profiles.json. JSON has
+# no comment syntax, so we ship the docs as inert keys (read paths only consume
+# "profiles" and "active_profile_id"; anything starting with "_" is ignored).
+# Keeping them constant means saving never produces a spurious diff.
+_PROFILES_HELP_COMMENT = (
+    "Per-keybind profiles for Phonetic. Each profile binds one hotkey to its "
+    "own models and system prompt, so different hotkeys can transcribe in "
+    "different ways. Edit this file (or use the Settings window) and restart "
+    "Phonetic to apply. Keys starting with '_' are documentation and are "
+    "ignored by the app. Docs: "
+    "https://github.com/startino/phonetic#per-keybind-profiles"
+)
+
+_PROFILES_HELP_FIELDS = {
+    "name": "Label shown in the Settings window. Free text.",
+    "hotkey": (
+        "Key combo that triggers this profile, in pynput format, e.g. "
+        "'<ctrl>+<alt>+r' (Linux/Windows) or '<cmd>+<shift>+r' (macOS). "
+        "Each profile's hotkey records and transcribes with THIS profile's "
+        "settings. Hotkeys must be unique across profiles."
+    ),
+    "asr_model": (
+        "OPTIONAL. When set, transcription is two-stage: this model does "
+        "speech-to-text only (e.g. 'nvidia/parakeet-tdt-0.6b-v3'), then "
+        "format_model rewrites it. Leave EMPTY to use a single multimodal "
+        "model (the legacy one-call path)."
+    ),
+    "format_model": (
+        "Model that formats/cleans the transcript (punctuation, paragraphs, "
+        "filler removal). When empty, falls back to the top-level MODEL in "
+        "config.env. In single-stage mode this is the only model used."
+    ),
+    "system_prompt": (
+        "Instruction that shapes the output for this profile — e.g. "
+        "'Transcribe verbatim.' vs 'Summarise into tight bullet points.' "
+        "Empty uses the built-in default prompt."
+    ),
+    "active_profile_id": (
+        "(top-level key) The 'id' of the fallback profile used when recording "
+        "is triggered without a specific hotkey — the tray/menu-bar action and "
+        "the single Wayland SIGUSR1 signal. Per-profile hotkeys always use "
+        "their own profile regardless of this value."
+    ),
+}
+
+
 def _format_profiles_json(cfg: Config) -> str:
-    """Serialize profiles + active id to JSON text."""
+    """Serialize profiles + active id to JSON text, with embedded docs."""
     return json.dumps(
         {
+            "_comment": _PROFILES_HELP_COMMENT,
+            "_fields": _PROFILES_HELP_FIELDS,
             "profiles": [_profile_to_dict(p) for p in cfg.profiles],
             "active_profile_id": cfg.active_profile_id,
         },
         indent=2,
+        ensure_ascii=False,
     )
 
 
