@@ -21,6 +21,7 @@
 - `C_INCLUDE_PATH` must include linux headers for evdev to compile
 - PyInstaller spec at `packaging/phonetic.spec`
 - GitHub Actions release workflow at `.github/workflows/release.yml`
+- **Version lives in TWO files — bump them together.** The release/build version is `pyproject.toml [project] version`. The Nix derivation has its OWN `version` at `nix/package.nix` (the `version = "X.Y.Z"` under `pname = "phonetic"`). They are independent strings: bumping `pyproject.toml` does NOT update `nix/package.nix`. When cutting a release, set BOTH to the same semver in the same commit — otherwise NixOS installs report a stale store-path version (e.g. `phonetic-0.5.66`) even though the running code is newer. There is no build-time check coupling them; it's a manual invariant, so treat "bump version" as "bump `pyproject.toml` AND `nix/package.nix`".
 
 ## Key Dependencies
 - `quickmachotkey` (macOS only — Carbon RegisterEventHotKey, no permissions needed)
