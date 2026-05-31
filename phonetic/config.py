@@ -67,7 +67,6 @@ class Config:
     # Per-keybind profiles, persisted to a sidecar profiles.json (NOT env).
     # The default profile mirrors the top-level fields for backward compat.
     profiles: list[Profile] = field(default_factory=list)
-    active_profile_id: str = ""
 
     # Fields that are auto-detected and never saved
     _AUTO_FIELDS: ClassVar[set[str]] = {"sample_rate", "channels", "device"}
@@ -125,35 +124,28 @@ def _synthesize_default_profile(cfg: Config) -> Profile:
 
 
 def _apply_profiles(cfg: Config) -> None:
-    """Populate cfg.profiles / active_profile_id from profiles.json.
+    """Populate cfg.profiles from profiles.json.
 
     If no profiles exist on disk, synthesize one default profile from the
-    top-level fields so behavior is identical for pre-profiles users.
+    top-level fields so behavior is identical for pre-profiles users. The
+    first profile is the primary one — keyless triggers (tray action, Wayland
+    SIGUSR1) use it.
     """
     path = _profiles_path()
     profiles: list[Profile] = []
-    active_id = ""
     file_existed = path.is_file()
     if file_existed:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             profiles = [_profile_from_dict(d) for d in data.get("profiles", [])]
-            active_id = str(data.get("active_profile_id", "") or "")
         except Exception as e:
             print(f"[config] Could not read profiles.json: {e}", file=sys.stderr)
             profiles = []
-            active_id = ""
 
     if not profiles:
-        default = _synthesize_default_profile(cfg)
-        profiles = [default]
-        active_id = default.id
-
-    if not active_id or not any(p.id == active_id for p in profiles):
-        active_id = profiles[0].id
+        profiles = [_synthesize_default_profile(cfg)]
 
     cfg.profiles = profiles
-    cfg.active_profile_id = active_id
 
     # Materialize a real, self-documenting profiles.json the first time we run
     # so users have a concrete file to edit instead of a blank slate. Only when
@@ -294,8 +286,8 @@ SYSTEM_PROMPT={_quote(cfg.system_prompt)}
 
 
 # Embedded documentation written at the top of every profiles.json. JSON has
-# no comment syntax, so we ship the docs as inert keys (read paths only consume
-# "profiles" and "active_profile_id"; anything starting with "_" is ignored).
+# no comment syntax, so we ship the docs as inert keys (the read path only
+# consumes "profiles"; anything starting with "_" is ignored).
 # Keeping them constant means saving never produces a spurious diff.
 _PROFILES_HELP_COMMENT = (
     "Per-keybind profiles for Phonetic. Each profile binds one hotkey to its "
@@ -330,23 +322,23 @@ _PROFILES_HELP_FIELDS = {
         "'Transcribe verbatim.' vs 'Summarise into tight bullet points.' "
         "Empty uses the built-in default prompt."
     ),
-    "active_profile_id": (
-        "(top-level key) The 'id' of the fallback profile used when recording "
-        "is triggered without a specific hotkey — the tray/menu-bar action and "
-        "the single Wayland SIGUSR1 signal. Per-profile hotkeys always use "
-        "their own profile regardless of this value."
+    "_order": (
+        "The FIRST profile in this list is the primary one: the keyless "
+        "triggers (tray/menu-bar action and the single Wayland SIGUSR1 signal) "
+        "record with it. Every per-profile hotkey always uses its own profile. "
+        "A hotkey registered for a profile that no longer exists fails loudly "
+        "rather than recording with a fallback."
     ),
 }
 
 
 def _format_profiles_json(cfg: Config) -> str:
-    """Serialize profiles + active id to JSON text, with embedded docs."""
+    """Serialize profiles to JSON text, with embedded docs."""
     return json.dumps(
         {
             "_comment": _PROFILES_HELP_COMMENT,
             "_fields": _PROFILES_HELP_FIELDS,
             "profiles": [_profile_to_dict(p) for p in cfg.profiles],
-            "active_profile_id": cfg.active_profile_id,
         },
         indent=2,
         ensure_ascii=False,

@@ -101,14 +101,13 @@ This adds two profiles to the auto-generated default: a verbatim hotkey, and a t
       "format_model": "openai/gpt-4o-mini",
       "system_prompt": "Rewrite the transcript as a concise bulleted list of the key points. Drop filler and repetition."
     }
-  ],
-  "active_profile_id": "bb804489-6bd1-58d2-b80d-aaaeef817d07"
+  ]
 }
 ```
 
 Notes:
 - **`id`** must be unique and stable — any string works (the `Default` profile uses a fixed UUID; for your own profiles a short slug like `"verbatim"` is fine). Don't reuse an `id` between profiles.
-- **`active_profile_id`** is the *fallback* profile used when recording is triggered without a hotkey — the tray/menu-bar action and the single Wayland `SIGUSR1` signal. Each profile's own hotkey always uses that profile regardless of this value.
+- **Order matters: the first profile is the primary one.** The keyless triggers — the tray/menu-bar action and the single Wayland `SIGUSR1` signal — record with the first profile in the list. Every per-profile hotkey always uses its own profile. There is no fallback selector: a hotkey registered for a profile that no longer exists fails loudly (a notification, no recording) rather than silently recording with some other profile.
 
 ### Hotkey format
 

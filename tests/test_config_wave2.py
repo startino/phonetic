@@ -29,7 +29,6 @@ def test_no_profiles_json_synthesizes_default(isolated_config, monkeypatch):
     assert default.name == "Default"
     assert default.hotkey == "<ctrl>+<alt>+r"
     assert default.system_prompt == "my prompt"
-    assert cfg.active_profile_id == DEFAULT_PROFILE_ID
 
 
 def test_synthesis_is_stable_across_loads(isolated_config, monkeypatch):
@@ -46,11 +45,10 @@ def test_save_writes_profiles_json(isolated_config, monkeypatch):
                  asr_model="nvidia/parakeet-tdt-0.6b-v3",
                  format_model="openai/gpt-4o", system_prompt="work prompt")
     cfg.profiles.append(p2)
-    cfg.active_profile_id = "custom-id"
     save_config(cfg)
 
     data = json.loads(_profiles_path().read_text(encoding="utf-8"))
-    assert data["active_profile_id"] == "custom-id"
+    assert "active_profile_id" not in data
     ids = [p["id"] for p in data["profiles"]]
     assert DEFAULT_PROFILE_ID in ids
     assert "custom-id" in ids
@@ -63,24 +61,27 @@ def test_profiles_round_trip(isolated_config, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
     cfg = load_config(require_key=True)
     cfg.profiles.append(Profile(id="p2", name="B", hotkey="<ctrl>+<alt>+b"))
-    cfg.active_profile_id = "p2"
     save_config(cfg)
 
     reloaded = load_config(require_key=True)
     assert [p.id for p in reloaded.profiles] == [DEFAULT_PROFILE_ID, "p2"]
-    assert reloaded.active_profile_id == "p2"
     assert reloaded.profiles[1].name == "B"
 
 
-def test_invalid_active_id_falls_back(isolated_config, monkeypatch):
+def test_legacy_active_profile_id_ignored(isolated_config, monkeypatch):
+    """A profiles.json carrying the removed active_profile_id key still loads —
+    the stale key is simply ignored, and a fresh save drops it."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
     _profiles_path().write_text(json.dumps({
         "profiles": [{"id": "a", "name": "A", "hotkey": "<ctrl>+<alt>+a"}],
         "active_profile_id": "does-not-exist",
     }), encoding="utf-8")
     cfg = load_config(require_key=True)
-    # Active id that doesn't match any profile falls back to the first profile.
-    assert cfg.active_profile_id == "a"
+    assert [p.id for p in cfg.profiles] == ["a"]
+    assert not hasattr(cfg, "active_profile_id")
+    save_config(cfg)
+    data = json.loads(_profiles_path().read_text(encoding="utf-8"))
+    assert "active_profile_id" not in data
 
 
 def test_corrupt_profiles_json_synthesizes_default(isolated_config, monkeypatch):
@@ -110,7 +111,7 @@ def test_load_materializes_profiles_json_when_missing(isolated_config, monkeypat
     default = data["profiles"][0]
     assert default["id"] == DEFAULT_PROFILE_ID
     assert default["hotkey"] == "<ctrl>+<alt>+r"
-    assert data["active_profile_id"] == DEFAULT_PROFILE_ID
+    assert "active_profile_id" not in data
 
 
 def test_materialized_file_reloads_cleanly(isolated_config, monkeypatch):
@@ -120,7 +121,6 @@ def test_materialized_file_reloads_cleanly(isolated_config, monkeypatch):
     reloaded = load_config(require_key=True)  # reads it back
     assert len(reloaded.profiles) == 1
     assert reloaded.profiles[0].id == DEFAULT_PROFILE_ID
-    assert reloaded.active_profile_id == DEFAULT_PROFILE_ID
 
 
 def test_load_does_not_clobber_corrupt_file(isolated_config, monkeypatch):

@@ -37,7 +37,6 @@ class SettingsWindow(ctk.CTkToplevel):
             [Profile(**vars(p)) for p in config.profiles]
             if (config and config.profiles) else []
         )
-        self._active_profile_id: str = config.active_profile_id if config else ""
         self._selected_index: int = 0
 
         self.title("Phonetic — First Run Setup" if first_run else "Phonetic — Settings")
@@ -288,9 +287,6 @@ class SettingsWindow(ctk.CTkToplevel):
                 format_model=self._config.format_model if self._config else "",
                 system_prompt=self._config.system_prompt if self._config else DEFAULT_SYSTEM_PROMPT,
             )]
-            self._active_profile_id = DEFAULT_PROFILE_ID
-        if not self._active_profile_id:
-            self._active_profile_id = self._profiles[0].id
 
         self._selected_index = 0
         self._refresh_profile_list()
@@ -384,9 +380,7 @@ class SettingsWindow(ctk.CTkToplevel):
     def _delete_profile(self) -> None:
         if len(self._profiles) <= 1:
             return
-        removed = self._profiles.pop(self._selected_index)
-        if self._active_profile_id == removed.id:
-            self._active_profile_id = self._profiles[0].id
+        self._profiles.pop(self._selected_index)
         self._selected_index = max(0, self._selected_index - 1)
         self._refresh_profile_list()
         self._load_profile_into_editor(self._selected_index)
@@ -567,7 +561,6 @@ class SettingsWindow(ctk.CTkToplevel):
                             parent=self,
                         )
                         return
-            active_id = self._active_profile_id or (profiles[0].id if profiles else "")
             model = self._config.model if self._config else DEFAULT_MODEL
             # Mirror the default profile into the top-level fields for compat.
             default_profile = next(
@@ -592,7 +585,6 @@ class SettingsWindow(ctk.CTkToplevel):
             asr_model=top_asr,
             format_model=top_format or model,
             profiles=profiles,
-            active_profile_id=active_id,
         )
 
         save_config(new_cfg)

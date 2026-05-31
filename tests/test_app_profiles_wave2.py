@@ -55,7 +55,7 @@ def _cfg_with_profiles():
         sample_rate=16000, channels=1, device=None,
         notify=True, system_prompt="DEFAULT PROMPT",
         asr_model="", format_model="google/gemini-3-flash-preview",
-        profiles=[default, work], active_profile_id=DEFAULT_PROFILE_ID,
+        profiles=[default, work],
     )
 
 
@@ -66,17 +66,24 @@ def test_resolve_profile_by_id():
     assert app._resolve_profile(DEFAULT_PROFILE_ID).name == "Default"
 
 
-def test_resolve_profile_blank_uses_active():
+def test_resolve_profile_blank_uses_first():
+    """Keyless triggers (tray, Wayland SIGUSR1) pass a blank id and get the
+    first/primary profile."""
     app = App(headless=True)
     app._cfg = _cfg_with_profiles()
-    app._cfg.active_profile_id = "work-id"
-    assert app._resolve_profile("").id == "work-id"
+    assert app._resolve_profile("").id == DEFAULT_PROFILE_ID
 
 
-def test_resolve_profile_unknown_id_falls_back_to_active():
+def test_resolve_profile_unknown_id_raises():
+    """A hotkey carrying a profile_id that matches no profile fails loudly
+    rather than silently recording with a fallback."""
+    import pytest
+    from phonetic.app import UnknownProfileError
+
     app = App(headless=True)
     app._cfg = _cfg_with_profiles()
-    assert app._resolve_profile("nonexistent").id == DEFAULT_PROFILE_ID
+    with pytest.raises(UnknownProfileError):
+        app._resolve_profile("nonexistent")
 
 
 def test_transcribe_worker_uses_profile_models(monkeypatch):

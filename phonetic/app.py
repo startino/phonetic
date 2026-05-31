@@ -19,6 +19,20 @@ from .transcribe import transcribe
 from .tray import TrayManager
 
 
+class UnknownProfileError(Exception):
+    """A hotkey fired carrying a profile_id that matches no configured profile.
+
+    This means a stale/dangling hotkey registration survived a profile being
+    deleted or its id changing. We raise instead of silently recording with
+    some other profile, so the failure is visible rather than producing a
+    transcription under the wrong profile's models/prompt.
+    """
+
+    def __init__(self, profile_id: str) -> None:
+        self.profile_id = profile_id
+        super().__init__(f"no profile matches hotkey profile_id={profile_id!r}")
+
+
 class App:
     """Main application orchestrator.
 
@@ -323,19 +337,24 @@ class App:
     # --- Profile resolution ---
 
     def _resolve_profile(self, profile_id: str = "") -> Optional[Profile]:
-        """Return the Profile for profile_id, falling back to active/default."""
+        """Return the Profile for profile_id.
+
+        A blank profile_id comes from the keyless triggers (tray/menu-bar
+        action, Wayland SIGUSR1) and resolves to the first profile — the
+        primary one. A non-blank profile_id comes from a per-keybind hotkey
+        registration and MUST match an existing profile; if it does not, we
+        raise ``UnknownProfileError`` instead of falling back, because a hotkey
+        firing for a profile that no longer exists is a bug to surface, not to
+        paper over by recording with the wrong profile.
+        """
         if self._cfg is None or not self._cfg.profiles:
             return None
-        if profile_id:
-            for p in self._cfg.profiles:
-                if p.id == profile_id:
-                    return p
-        active = self._cfg.active_profile_id
-        if active:
-            for p in self._cfg.profiles:
-                if p.id == active:
-                    return p
-        return self._cfg.profiles[0]
+        if not profile_id:
+            return self._cfg.profiles[0]
+        for p in self._cfg.profiles:
+            if p.id == profile_id:
+                return p
+        raise UnknownProfileError(profile_id)
 
     # --- Recording logic (same as original main.py:301-351) ---
 
@@ -378,7 +397,16 @@ class App:
         if not mic_ok:
             self._show_mic_denied_dialog()
             return
-        profile = self._resolve_profile(profile_id)
+        try:
+            profile = self._resolve_profile(profile_id)
+        except UnknownProfileError as e:
+            _log(f"toggle_recording: REFUSING to record — {e}")
+            print(f"Hotkey fired for unknown profile {e.profile_id!r}; not "
+                  f"recording. A stale hotkey is registered for a deleted "
+                  f"profile — fix your profiles.", file=sys.stderr)
+            self._notify("Hotkey points at a profile that no longer exists — "
+                         "not recording", "critical")
+            return
         self._recording_profile_id = profile.id if profile is not None else profile_id
         _log(f"toggle_recording: starting recording for profile_id={self._recording_profile_id!r} "
              f"name={profile.name if profile else '?'!r}")
