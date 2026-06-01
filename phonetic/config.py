@@ -159,6 +159,220 @@ def _apply_profiles(cfg: Config) -> None:
             print(f"[config] Could not write profiles.json: {e}", file=sys.stderr)
 
 
+# ---------------------------------------------------------------------------
+# Self-documenting example files
+#
+# On every startup we (re)write `config.env.example` and `profiles.json.example`
+# into the config dir. They are pure REFERENCE files — never read by the app —
+# that show the full range of what each setting can do. They are force-rewritten
+# whenever the running version changes (detected via the embedded
+# `phonetic-example-v<version>` token), so after every upgrade the user has an
+# up-to-date, richer reference sitting next to their live config. We never touch
+# the user's real `config.env` / `profiles.json` here.
+# ---------------------------------------------------------------------------
+
+
+def _example_config_path() -> Path:
+    return _config_dir() / "config.env.example"
+
+
+def _example_profiles_path() -> Path:
+    return _config_dir() / "profiles.json.example"
+
+
+def _example_token(version: str) -> str:
+    return f"phonetic-example-v{version}"
+
+
+def _format_example_config_env(version: str) -> str:
+    """Rich, heavily-commented config.env reference for the given version."""
+    token = _example_token(version)
+    return f"""\
+# ============================================================================
+# phonetic — config.env.example   ({token})
+# ----------------------------------------------------------------------------
+# REFERENCE ONLY. Phonetic regenerates this file on every upgrade, so edits
+# here WILL be overwritten. To change your real settings, edit `config.env`
+# (same folder) or use the Settings window, then restart Phonetic.
+#
+# For multiple hotkeys — each with its own models and prompt — see the
+# companion `profiles.json.example` in this folder.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# OPENROUTER_API_KEY  (REQUIRED)
+#   Your OpenRouter API key. Create one at:
+#     https://openrouter.ai/settings/keys
+# ----------------------------------------------------------------------------
+OPENROUTER_API_KEY=sk-or-v1-...
+
+# ----------------------------------------------------------------------------
+# MODEL  — model used for the SINGLE-CALL path (when ASR_MODEL is blank).
+#   Must be audio-capable (accepts an audio attachment). Tips:
+#     - Avoid OpenAI / Anthropic / Google providers on an HK-region billing
+#       address — OpenRouter geo-blocks all three there.
+#   Examples:
+#     mistralai/voxtral-small-24b-2507     <- default, audio-capable, HK-safe
+#     mistralai/voxtral-mini-2507          <- smaller / cheaper
+#     google/gemini-2.0-flash-001          <- audio-capable (geo-limited)
+# ----------------------------------------------------------------------------
+MODEL={DEFAULT_MODEL}
+
+# ----------------------------------------------------------------------------
+# TWO-STAGE PIPELINE  (optional — often cleaner output)
+#   When ASR_MODEL is set, transcription runs in two steps:
+#       audio --> ASR_MODEL (speech-to-text) --> FORMAT_MODEL (cleanup/format)
+#   Leave ASR_MODEL BLANK to use the single-call MODEL path above.
+#
+#   ASR_MODEL  — transcription-only, audio in / raw text out:
+#     nvidia/parakeet-tdt-0.6b-v3          <- fast, accurate, HK-safe
+#     openai/whisper-large-v3              <- (geo-limited)
+#
+#   FORMAT_MODEL — any chat model (NO audio needed); rewrites the raw text
+#                  per your SYSTEM_PROMPT. Falls back to MODEL when blank.
+#     mistralai/mistral-small-3.2-24b-instruct   <- cheap, fast cleanup
+#     anthropic/claude-3.5-haiku                 <- (geo-limited)
+#
+#   Example two-stage setup (uncomment both lines):
+#     ASR_MODEL=nvidia/parakeet-tdt-0.6b-v3
+#     FORMAT_MODEL=mistralai/mistral-small-3.2-24b-instruct
+# ----------------------------------------------------------------------------
+ASR_MODEL=
+FORMAT_MODEL=
+
+# ----------------------------------------------------------------------------
+# HOTKEY  — global record toggle, in pynput format.
+#   Modifiers: <ctrl>  <alt>  <cmd>  <shift>   (combine with '+')
+#   Examples:
+#     <ctrl>+<alt>+r        <- Linux / Windows default
+#     <cmd>+<shift>+r       <- macOS default
+#     <ctrl>+<alt>+space
+#   On Wayland, recording also toggles on SIGUSR1:  kill -USR1 <pid>
+#   Want SEVERAL hotkeys? Define them in profiles.json (see the example file).
+# ----------------------------------------------------------------------------
+HOTKEY=<ctrl>+<alt>+r
+
+# ----------------------------------------------------------------------------
+# NOTIFY  — desktop notifications.   1 = on, 0 = off
+# ----------------------------------------------------------------------------
+NOTIFY=1
+
+# ----------------------------------------------------------------------------
+# AUTO_START  — launch Phonetic at login.   1 = on, 0 = off
+# ----------------------------------------------------------------------------
+AUTO_START=0
+
+# ----------------------------------------------------------------------------
+# SYSTEM_PROMPT  — instruction that shapes the output. A few ideas:
+#     Verbatim:    "Transcribe verbatim. Output only the transcription."
+#     Bullets:     "Summarise what was said into concise bullet points."
+#     Email:       "Rewrite the speech as a polite, well-structured email."
+#     Code:        "Format spoken code as a fenced code block. No prose."
+#   Leave blank to use the built-in default (shown below): clean formatting,
+#   punctuation, paragraphing, filler/self-correction removal, words unchanged.
+# ----------------------------------------------------------------------------
+SYSTEM_PROMPT="{DEFAULT_SYSTEM_PROMPT.replace(chr(10), ' ').replace('"', chr(92) + '"').strip()}"
+"""
+
+
+def _example_profiles() -> list[Profile]:
+    """A spread of illustrative profiles showing what's possible."""
+    return [
+        Profile(
+            id="example-default",
+            name="Default (single-call, clean formatting)",
+            hotkey="<ctrl>+<alt>+r",
+            asr_model="",
+            format_model="",
+            system_prompt="",  # empty -> built-in default prompt
+        ),
+        Profile(
+            id="example-verbatim",
+            name="Verbatim (no cleanup)",
+            hotkey="<ctrl>+<alt>+v",
+            asr_model="",
+            format_model="",
+            system_prompt=(
+                "Transcribe the audio verbatim. Keep every word, including "
+                "filler and false starts. Output only the transcription."
+            ),
+        ),
+        Profile(
+            id="example-bullets",
+            name="Bullet Summary (two-stage)",
+            hotkey="<ctrl>+<alt>+b",
+            asr_model="nvidia/parakeet-tdt-0.6b-v3",
+            format_model="mistralai/mistral-small-3.2-24b-instruct",
+            system_prompt=(
+                "Summarise what was said into concise, well-grouped bullet "
+                "points. Drop filler. Keep the speaker's own terminology."
+            ),
+        ),
+        Profile(
+            id="example-code",
+            name="Code Dictation (two-stage)",
+            hotkey="<ctrl>+<alt>+c",
+            asr_model="nvidia/parakeet-tdt-0.6b-v3",
+            format_model="mistralai/mistral-small-3.2-24b-instruct",
+            system_prompt=(
+                "The speaker is dictating source code. Output the code only, "
+                "inside a single fenced code block. No prose, no explanation."
+            ),
+        ),
+    ]
+
+
+def _format_example_profiles_json(version: str) -> str:
+    """profiles.json reference showing several distinct example profiles."""
+    return json.dumps(
+        {
+            "_comment": _PROFILES_HELP_COMMENT,
+            "_note": (
+                f"REFERENCE ONLY ({_example_token(version)}). Phonetic "
+                "regenerates this file on every upgrade — edits here are "
+                "overwritten. Copy profiles you like into the real "
+                "profiles.json (same folder) and restart."
+            ),
+            "_fields": _PROFILES_HELP_FIELDS,
+            "profiles": [_profile_to_dict(p) for p in _example_profiles()],
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+def _needs_example_rewrite(path: Path, version: str) -> bool:
+    """True if the example file is missing or stamped with a different version."""
+    if not path.is_file():
+        return True
+    try:
+        return _example_token(version) not in path.read_text(encoding="utf-8")
+    except OSError:
+        return True
+
+
+def write_example_files() -> None:
+    """Force-(re)write the .example reference files when the version changes.
+
+    Called once per startup. The live config.env / profiles.json are never
+    touched here — only the *.example siblings.
+    """
+    from . import __version__
+
+    targets = [
+        (_example_config_path(), _format_example_config_env(__version__)),
+        (_example_profiles_path(), _format_example_profiles_json(__version__)),
+    ]
+    for path, content in targets:
+        if not _needs_example_rewrite(path, __version__):
+            continue
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        except OSError as e:
+            print(f"[config] Could not write {path.name}: {e}", file=sys.stderr)
+
+
 def config_file_path() -> Path:
     """Return the resolved config file path (for UI display)."""
     # Check env var override
@@ -208,6 +422,11 @@ def load_config(require_key: bool = True) -> Optional[Config]:
     Returns:
         Config object, or None if API key is missing and require_key is True.
     """
+    # Refresh the self-documenting .example reference files (force-rewritten on
+    # every version bump). Done first, before audio/dotenv work, so the
+    # references always land regardless of audio-device or config state.
+    write_example_files()
+
     from .audio_detect import detect_audio
 
     _find_and_load_dotenv()
