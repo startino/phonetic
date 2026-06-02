@@ -11,9 +11,14 @@ from .config import Config
 # Write the last recorded WAV here so we can verify audio capture independently
 _DEBUG_WAV = "/tmp/phonetic_debug.wav"
 
-# Downsample to 16 kHz when the WAV payload would exceed this threshold (bytes).
-# 16 kHz mono PCM-16 ≈ ~32 KB/s — a 7-minute recording is ~13 MB, well within API limits.
-_MAX_WAV_BYTES = 20_000_000  # 20 MB
+# Target sample rate for everything we send to the API. Voxtral and the other
+# speech-to-text models OpenRouter serves are trained at 16 kHz; native-rate
+# capture (44.1/48 kHz) buys ASR nothing and inflates the payload ~2.75x. We
+# ALWAYS downsample the send payload to 16 kHz mono — there is no size
+# threshold to get wrong. A prior bug used a 20 MB WAV-bytes threshold that sat
+# ABOVE the provider's real accept size, so a ~3.5-min 44.1 kHz recording
+# (18.2 MB WAV / 24.3 MB base64) slipped through unmodified and was rejected
+# upstream with an HTTP-200-wrapped 429. See docs/fixes/0001-*.
 _DOWNSAMPLE_RATE = 16_000
 
 # OpenRouter base URLs for the two endpoint families.
@@ -45,6 +50,93 @@ def _downsample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     if audio.ndim > 1:
         frac = frac[:, np.newaxis]
     return (audio[lower] * (1 - frac) + audio[upper] * frac).astype(audio.dtype)
+
+
+def _save_debug_wav(audio: np.ndarray, sample_rate: int, tag: str) -> bytes | None:
+    """Write the full-quality recording to _DEBUG_WAV before any downsampling.
+
+    Returns the WAV bytes, or None if the write failed. Best-effort: a failure
+    here never blocks transcription.
+    """
+    try:
+        buf = io.BytesIO()
+        channels = audio.shape[1] if audio.ndim > 1 else 1
+        with sf.SoundFile(buf, mode="w", samplerate=sample_rate, channels=channels,
+                          subtype="PCM_16", format="WAV") as f:
+            f.write(audio)
+        debug_bytes = buf.getvalue()
+        with open(_DEBUG_WAV, "wb") as df:
+            df.write(debug_bytes)
+        print(f"[{tag}] Debug WAV saved to {_DEBUG_WAV} ({len(debug_bytes)} bytes)")
+        return debug_bytes
+    except Exception as e:
+        print(f"[{tag}] Could not save debug WAV: {e}")
+        return None
+
+
+def _to_send_audio(audio: np.ndarray, sample_rate: int, tag: str) -> tuple[np.ndarray, int]:
+    """Render the audio that will actually be transmitted: <=16 kHz mono.
+
+    Always downsamples when the capture rate exceeds 16 kHz. This is the single
+    source of truth for send-payload sizing — there is no byte threshold. A
+    recording captured at 44.1/48 kHz is collapsed to 16 kHz mono so its
+    encoded payload stays well under the provider's accept size regardless of
+    duration. Audio already at or below 16 kHz is passed through untouched.
+    """
+    if sample_rate > _DOWNSAMPLE_RATE:
+        if audio.ndim > 1:
+            audio = audio[:, 0]
+        print(f"[{tag}] Downsampling {sample_rate}Hz -> {_DOWNSAMPLE_RATE}Hz for send")
+        audio = _downsample(audio, sample_rate, _DOWNSAMPLE_RATE)
+        sample_rate = _DOWNSAMPLE_RATE
+        print(f"[{tag}] After downsample: shape={audio.shape}, rate={sample_rate}Hz")
+    return audio, sample_rate
+
+
+def _parse_response(resp, tag: str) -> dict:
+    """Validate an OpenRouter response and return its parsed JSON, or raise.
+
+    Two failure modes are treated identically as hard errors:
+
+    1. A non-2xx HTTP status (the usual case).
+    2. An HTTP-200 body that carries an ``{"error": {...}}`` object. OpenRouter
+       wraps upstream provider failures — an oversized-audio rejection surfaces
+       as ``code: 429``, a content-policy block, a model-down, a quota hit — in
+       a 200 response with no ``choices``. The previous code only checked the
+       HTTP status, so these silently became empty transcriptions. They must
+       surface as errors so the caller's critical-notification path fires.
+    """
+    print(f"[{tag}] Response status: {resp.status_code}")
+    if not resp.is_success:
+        try:
+            body = resp.json()
+            msg = body.get("error", {}).get("message", "") or resp.text
+        except Exception:
+            msg = resp.text
+        raise RuntimeError(f"OpenRouter {resp.status_code}: {msg}")
+    data = resp.json()
+    meta = {k: v for k, v in data.items() if k != "choices"}
+    print(f"[{tag}] Response meta: {json.dumps(meta)}")
+    err = data.get("error")
+    if err:
+        code = err.get("code", resp.status_code) if isinstance(err, dict) else resp.status_code
+        msg = (err.get("message", "") if isinstance(err, dict) else "") or str(err)
+        raise RuntimeError(f"OpenRouter {code}: {msg}")
+    return data
+
+
+def _chat_text(data: dict, tag: str) -> str:
+    """Extract assistant text from a validated chat/completions response.
+
+    ``data`` must already have passed :func:`_parse_response` (no error body).
+    A missing/empty ``choices`` array on an otherwise-OK response is malformed
+    and raised rather than laundered into an empty transcription.
+    """
+    choices = data.get("choices")
+    if not choices:
+        meta = {k: v for k, v in data.items() if k != "choices"}
+        raise RuntimeError(f"OpenRouter returned no choices: {json.dumps(meta)}")
+    return (choices[0] or {}).get("message", {}).get("content", "") or ""
 
 
 def audio_to_base64(audio: np.ndarray, sample_rate: int) -> str:
@@ -81,31 +173,10 @@ def transcribe(cfg: Config, audio: np.ndarray, sample_rate: int | None = None) -
     print(f"[transcribe] Audio: {duration:.1f}s, peak={peak:.4f}, rate={sample_rate}Hz, "
           f"shape={audio.shape}, dtype={audio.dtype}")
 
-    # Save full-quality debug WAV before any downsampling
-    try:
-        buf = io.BytesIO()
-        channels = audio.shape[1] if audio.ndim > 1 else 1
-        with sf.SoundFile(buf, mode="w", samplerate=sample_rate, channels=channels,
-                          subtype="PCM_16", format="WAV") as f:
-            f.write(audio)
-        debug_bytes = buf.getvalue()
-        with open(_DEBUG_WAV, "wb") as df:
-            df.write(debug_bytes)
-        print(f"[transcribe] Debug WAV saved to {_DEBUG_WAV} ({len(debug_bytes)} bytes)")
-    except Exception as e:
-        print(f"[transcribe] Could not save debug WAV: {e}")
-        debug_bytes = None
-
-    # Downsample long recordings to keep the API payload manageable
-    est_wav_size = debug_bytes and len(debug_bytes) or (audio.shape[0] * 2 * channels + 44)
-    if sample_rate > _DOWNSAMPLE_RATE and est_wav_size > _MAX_WAV_BYTES:
-        print(f"[transcribe] WAV too large ({est_wav_size} bytes), "
-              f"downsampling {sample_rate}Hz -> {_DOWNSAMPLE_RATE}Hz")
-        if audio.ndim > 1:
-            audio = audio[:, 0]
-        audio = _downsample(audio, sample_rate, _DOWNSAMPLE_RATE)
-        sample_rate = _DOWNSAMPLE_RATE
-        print(f"[transcribe] After downsample: shape={audio.shape}, rate={sample_rate}Hz")
+    # Save full-quality debug WAV before any downsampling, then render the send
+    # payload at 16 kHz mono (always — see _to_send_audio).
+    _save_debug_wav(audio, sample_rate, "transcribe")
+    audio, sample_rate = _to_send_audio(audio, sample_rate, "transcribe")
 
     audio_b64 = audio_to_base64(audio, sample_rate)
     print(f"[transcribe] Base64 payload: {len(audio_b64)} chars")
@@ -150,25 +221,14 @@ def transcribe(cfg: Config, audio: np.ndarray, sample_rate: int | None = None) -
             },
             json=payload,
         )
-        print(f"[transcribe] Response status: {resp.status_code}")
-        if not resp.is_success:
-            try:
-                body = resp.json()
-                msg = body.get("error", {}).get("message", "") or resp.text
-            except Exception:
-                msg = resp.text
-            raise RuntimeError(f"OpenRouter {resp.status_code}: {msg}")
-        data = resp.json()
-        # Log the full response (model used, usage, etc.)
-        debug_resp = {k: v for k, v in data.items() if k != "choices"}
-        print(f"[transcribe] Response meta: {json.dumps(debug_resp)}")
-        text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        data = _parse_response(resp, "transcribe")
+        text = _chat_text(data, "transcribe")
         print(f"[transcribe] Transcription ({len(text)} chars): {text[:200]!r}")
         return text
 
 
 def _prepare_audio(audio: np.ndarray, sample_rate: int | None) -> tuple[np.ndarray, int]:
-    """Save debug WAV and downsample long recordings. Shared by the ASR stage."""
+    """Save debug WAV and render the send payload at 16 kHz. Shared by the ASR stage."""
     if sample_rate is None:
         sample_rate = 0  # caller guarantees a real rate; guard for safety
     duration = audio.shape[0] / sample_rate if sample_rate else 0.0
@@ -176,31 +236,8 @@ def _prepare_audio(audio: np.ndarray, sample_rate: int | None) -> tuple[np.ndarr
     print(f"[asr] Audio: {duration:.1f}s, peak={peak:.4f}, rate={sample_rate}Hz, "
           f"shape={audio.shape}, dtype={audio.dtype}")
 
-    # Save full-quality debug WAV before any downsampling
-    debug_bytes = None
-    try:
-        buf = io.BytesIO()
-        channels = audio.shape[1] if audio.ndim > 1 else 1
-        with sf.SoundFile(buf, mode="w", samplerate=sample_rate, channels=channels,
-                          subtype="PCM_16", format="WAV") as f:
-            f.write(audio)
-        debug_bytes = buf.getvalue()
-        with open(_DEBUG_WAV, "wb") as df:
-            df.write(debug_bytes)
-        print(f"[asr] Debug WAV saved to {_DEBUG_WAV} ({len(debug_bytes)} bytes)")
-    except Exception as e:
-        print(f"[asr] Could not save debug WAV: {e}")
-        channels = audio.shape[1] if audio.ndim > 1 else 1
-
-    est_wav_size = debug_bytes and len(debug_bytes) or (audio.shape[0] * 2 * channels + 44)
-    if sample_rate > _DOWNSAMPLE_RATE and est_wav_size > _MAX_WAV_BYTES:
-        print(f"[asr] WAV too large ({est_wav_size} bytes), "
-              f"downsampling {sample_rate}Hz -> {_DOWNSAMPLE_RATE}Hz")
-        if audio.ndim > 1:
-            audio = audio[:, 0]
-        audio = _downsample(audio, sample_rate, _DOWNSAMPLE_RATE)
-        sample_rate = _DOWNSAMPLE_RATE
-        print(f"[asr] After downsample: shape={audio.shape}, rate={sample_rate}Hz")
+    _save_debug_wav(audio, sample_rate, "asr")
+    audio, sample_rate = _to_send_audio(audio, sample_rate, "asr")
     return audio, sample_rate
 
 
@@ -234,15 +271,7 @@ def _run_asr(cfg: Config, audio: np.ndarray, sample_rate: int | None = None) -> 
                 data={"model": cfg.asr_model},
                 files={"file": ("audio.wav", wav_bytes, "audio/wav")},
             )
-            print(f"[asr] Response status: {resp.status_code}")
-            if not resp.is_success:
-                try:
-                    body = resp.json()
-                    msg = body.get("error", {}).get("message", "") or resp.text
-                except Exception:
-                    msg = resp.text
-                raise RuntimeError(f"OpenRouter {resp.status_code}: {msg}")
-            data = resp.json()
+            data = _parse_response(resp, "asr")
             text = data.get("text", "") or ""
             print(f"[asr] Transcript ({len(text)} chars): {text[:200]!r}")
             return text
@@ -275,18 +304,8 @@ def _run_asr(cfg: Config, audio: np.ndarray, sample_rate: int | None = None) -> 
             },
             json=payload,
         )
-        print(f"[asr] Response status: {resp.status_code}")
-        if not resp.is_success:
-            try:
-                body = resp.json()
-                msg = body.get("error", {}).get("message", "") or resp.text
-            except Exception:
-                msg = resp.text
-            raise RuntimeError(f"OpenRouter {resp.status_code}: {msg}")
-        data = resp.json()
-        debug_resp = {k: v for k, v in data.items() if k != "choices"}
-        print(f"[asr] Response meta: {json.dumps(debug_resp)}")
-        text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        data = _parse_response(resp, "asr")
+        text = _chat_text(data, "asr")
         print(f"[asr] Transcript ({len(text)} chars): {text[:200]!r}")
         return text
 
@@ -315,17 +334,7 @@ def _run_format(cfg: Config, raw_transcript: str) -> str:
             },
             json=payload,
         )
-        print(f"[format] Response status: {resp.status_code}")
-        if not resp.is_success:
-            try:
-                body = resp.json()
-                msg = body.get("error", {}).get("message", "") or resp.text
-            except Exception:
-                msg = resp.text
-            raise RuntimeError(f"OpenRouter {resp.status_code}: {msg}")
-        data = resp.json()
-        debug_resp = {k: v for k, v in data.items() if k != "choices"}
-        print(f"[format] Response meta: {json.dumps(debug_resp)}")
-        text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        data = _parse_response(resp, "format")
+        text = _chat_text(data, "format")
         print(f"[format] Formatted ({len(text)} chars): {text[:200]!r}")
         return text
