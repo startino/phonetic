@@ -1,9 +1,13 @@
-"""Wave 2 config tests: Profile sidecar JSON + default-profile synthesis."""
+"""Wave 2 config tests: profiles.json behavior under the no-default-profile model.
+
+There is no synthesized default profile anymore: a fresh install with no
+profiles.json yields an empty profile list, which the app surfaces rather than
+papering over.
+"""
 import json
 
 from phonetic.config import (
     Config,
-    DEFAULT_PROFILE_ID,
     Profile,
     _profiles_path,
     load_config,
@@ -11,122 +15,82 @@ from phonetic.config import (
 )
 
 
-def test_default_profile_id_is_deterministic():
-    import uuid
-    expected = str(uuid.uuid5(uuid.NAMESPACE_DNS, "phonetic-default-profile"))
-    assert DEFAULT_PROFILE_ID == expected
-
-
-def test_no_profiles_json_synthesizes_default(isolated_config, monkeypatch):
-    """A user without profiles.json gets one synthesized default profile."""
+def test_no_profiles_json_yields_empty_list(isolated_config, monkeypatch):
+    """No profiles.json => no profiles (NOT a synthesized default)."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    monkeypatch.setenv("HOTKEY", "<ctrl>+<alt>+r")
-    monkeypatch.setenv("SYSTEM_PROMPT", "my prompt")
     cfg = load_config(require_key=True)
-    assert len(cfg.profiles) == 1
-    default = cfg.profiles[0]
-    assert default.id == DEFAULT_PROFILE_ID
-    assert default.name == "Default"
-    assert default.hotkey == "<ctrl>+<alt>+r"
-    assert default.system_prompt == "my prompt"
+    assert cfg.profiles == []
 
 
-def test_synthesis_is_stable_across_loads(isolated_config, monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    cfg1 = load_config(require_key=True)
-    cfg2 = load_config(require_key=True)
-    assert cfg1.profiles[0].id == cfg2.profiles[0].id == DEFAULT_PROFILE_ID
+def test_no_default_profile_id_symbol():
+    """The default-profile concept is gone; the symbol must not come back."""
+    import phonetic.config as config_mod
+    assert not hasattr(config_mod, "DEFAULT_PROFILE_ID")
+    assert not hasattr(config_mod, "_synthesize_default_profile")
 
 
 def test_save_writes_profiles_json(isolated_config, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    cfg = load_config(require_key=True)
-    p2 = Profile(id="custom-id", name="Work", hotkey="<ctrl>+<alt>+w",
-                 asr_model="nvidia/parakeet-tdt-0.6b-v3",
-                 format_model="openai/gpt-4o", system_prompt="work prompt")
-    cfg.profiles.append(p2)
+    cfg = Config(
+        openrouter_api_key="sk-test", sample_rate=48000, channels=1, device=None,
+        profiles=[
+            Profile(id="a", name="A", hotkey="<ctrl>+<alt>+a", model="m1"),
+            Profile(id="b", name="B", hotkey="<ctrl>+<alt>+b",
+                    asr_model="nvidia/parakeet-tdt-0.6b-v3",
+                    format_model="openai/gpt-4o"),
+        ],
+    )
     save_config(cfg)
-
     data = json.loads(_profiles_path().read_text(encoding="utf-8"))
-    assert "active_profile_id" not in data
-    ids = [p["id"] for p in data["profiles"]]
-    assert DEFAULT_PROFILE_ID in ids
-    assert "custom-id" in ids
-    work = next(p for p in data["profiles"] if p["id"] == "custom-id")
-    assert work["asr_model"] == "nvidia/parakeet-tdt-0.6b-v3"
-    assert work["format_model"] == "openai/gpt-4o"
+    assert [p["id"] for p in data["profiles"]] == ["a", "b"]
+    b = next(p for p in data["profiles"] if p["id"] == "b")
+    assert b["asr_model"] == "nvidia/parakeet-tdt-0.6b-v3"
+    assert b["format_model"] == "openai/gpt-4o"
 
 
 def test_profiles_round_trip(isolated_config, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    cfg = load_config(require_key=True)
-    cfg.profiles.append(Profile(id="p2", name="B", hotkey="<ctrl>+<alt>+b"))
+    cfg = Config(
+        openrouter_api_key="sk-test", sample_rate=48000, channels=1, device=None,
+        profiles=[
+            Profile(id="p1", name="One", hotkey="<ctrl>+<alt>+1", model="m"),
+            Profile(id="p2", name="Two", hotkey="<ctrl>+<alt>+2", model="m2"),
+        ],
+    )
     save_config(cfg)
-
     reloaded = load_config(require_key=True)
-    assert [p.id for p in reloaded.profiles] == [DEFAULT_PROFILE_ID, "p2"]
-    assert reloaded.profiles[1].name == "B"
+    assert [p.id for p in reloaded.profiles] == ["p1", "p2"]
+    assert reloaded.profiles[1].name == "Two"
+    assert reloaded.profiles[1].model == "m2"
 
 
-def test_legacy_active_profile_id_ignored(isolated_config, monkeypatch):
-    """A profiles.json carrying the removed active_profile_id key still loads —
-    the stale key is simply ignored, and a fresh save drops it."""
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    _profiles_path().write_text(json.dumps({
-        "profiles": [{"id": "a", "name": "A", "hotkey": "<ctrl>+<alt>+a"}],
-        "active_profile_id": "does-not-exist",
-    }), encoding="utf-8")
-    cfg = load_config(require_key=True)
-    assert [p.id for p in cfg.profiles] == ["a"]
-    assert not hasattr(cfg, "active_profile_id")
-    save_config(cfg)
-    data = json.loads(_profiles_path().read_text(encoding="utf-8"))
-    assert "active_profile_id" not in data
-
-
-def test_corrupt_profiles_json_synthesizes_default(isolated_config, monkeypatch):
+def test_corrupt_profiles_json_yields_empty(isolated_config, monkeypatch):
+    """A corrupt profiles.json reads as 'no profiles' (logged), not a crash."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
     _profiles_path().write_text("{ not valid json", encoding="utf-8")
     cfg = load_config(require_key=True)
-    assert len(cfg.profiles) == 1
-    assert cfg.profiles[0].id == DEFAULT_PROFILE_ID
+    assert cfg.profiles == []
 
 
-def test_load_materializes_profiles_json_when_missing(isolated_config, monkeypatch):
-    """First load writes a concrete, self-documenting profiles.json to disk."""
+def test_example_files_written_on_load(isolated_config, monkeypatch):
+    """Startup materializes the three .example reference files."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    monkeypatch.setenv("HOTKEY", "<ctrl>+<alt>+r")
-    assert not _profiles_path().is_file()
-
     load_config(require_key=True)
+    names = {p.name for p in isolated_config.iterdir()}
+    assert ".env.example" in names
+    assert "settings.json.example" in names
+    assert "profiles.json.example" in names
 
-    assert _profiles_path().is_file(), "profiles.json should be created on first load"
-    data = json.loads(_profiles_path().read_text(encoding="utf-8"))
-    # Self-documenting help block present and inert.
-    assert "_comment" in data
-    assert set(data["_fields"]) >= {"name", "hotkey", "asr_model",
+
+def test_example_profiles_have_model_and_hotkey(isolated_config, monkeypatch):
+    """The profiles.json.example shows the per-profile model + hotkey shape."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    load_config(require_key=True)
+    data = json.loads(
+        (isolated_config / "profiles.json.example").read_text(encoding="utf-8")
+    )
+    for p in data["profiles"]:
+        assert "model" in p
+        assert "hotkey" in p
+    assert set(data["_fields"]) >= {"name", "hotkey", "model", "asr_model",
                                     "format_model", "system_prompt"}
-    # A real, editable default profile is materialized.
-    assert len(data["profiles"]) == 1
-    default = data["profiles"][0]
-    assert default["id"] == DEFAULT_PROFILE_ID
-    assert default["hotkey"] == "<ctrl>+<alt>+r"
-    assert "active_profile_id" not in data
-
-
-def test_materialized_file_reloads_cleanly(isolated_config, monkeypatch):
-    """The auto-written file (with _comment/_fields) round-trips on reload."""
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    load_config(require_key=True)  # materializes
-    reloaded = load_config(require_key=True)  # reads it back
-    assert len(reloaded.profiles) == 1
-    assert reloaded.profiles[0].id == DEFAULT_PROFILE_ID
-
-
-def test_load_does_not_clobber_corrupt_file(isolated_config, monkeypatch):
-    """A corrupt/in-progress edit is never overwritten by materialization."""
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    _profiles_path().write_text("{ not valid json", encoding="utf-8")
-    load_config(require_key=True)
-    # The bad content is preserved for the user to fix, not silently replaced.
-    assert _profiles_path().read_text(encoding="utf-8") == "{ not valid json"

@@ -27,7 +27,6 @@ def _cfg(**overrides):
     base = dict(
         openrouter_api_key="sk-test",
         model="mistralai/voxtral-small-24b-2507",
-        hotkey="<ctrl>+<alt>+r",
         sample_rate=44100,
         channels=1,
         device=None,

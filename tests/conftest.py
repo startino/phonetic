@@ -15,8 +15,10 @@ def isolated_config(tmp_path, monkeypatch):
     cfg_dir = tmp_path / "phonetic"
     cfg_dir.mkdir(parents=True, exist_ok=True)
 
+    # Point all config storage at the tmp dir. _config_dir is the single source
+    # the per-file path helpers derive from, so overriding it relocates .env,
+    # settings.json, profiles.json, and the *.example files together.
     monkeypatch.setattr(config_mod, "_config_dir", lambda: cfg_dir)
-    monkeypatch.setattr(config_mod, "_config_path", lambda: cfg_dir / "config.env")
 
     # Stub audio_detect so load_config() never touches real hardware.
     fake_audio_detect = types.ModuleType("phonetic.audio_detect")
@@ -29,8 +31,9 @@ def isolated_config(tmp_path, monkeypatch):
 
     # Clear any env vars that load_config reads so each test is deterministic.
     for var in (
-        "OPENROUTER_API_KEY", "MODEL", "HOTKEY", "NOTIFY", "SYSTEM_PROMPT",
-        "AUTO_START", "ASR_MODEL", "FORMAT_MODEL",
+        "OPENROUTER_API_KEY", "MODEL", "HOTKEY", "NOTIFY", "VERBOSE",
+        "SYSTEM_PROMPT", "AUTO_START", "ASR_MODEL", "FORMAT_MODEL",
+        "PHONETIC_VERBOSE",
     ):
         monkeypatch.delenv(var, raising=False)
 

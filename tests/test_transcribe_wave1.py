@@ -11,7 +11,6 @@ def _cfg(**overrides):
     base = dict(
         openrouter_api_key="sk-test",
         model="google/gemini-3-flash-preview",
-        hotkey="<ctrl>+<alt>+r",
         sample_rate=16000,
         channels=1,
         device=None,

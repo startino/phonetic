@@ -1,8 +1,8 @@
-"""Wave 2 app tests: profile resolution + per-profile transcribe routing.
+"""Wave 2 app tests: strict profile resolution (no default) + per-profile
+transcribe routing + profile-switch-while-recording.
 
-phonetic.app imports tkinter (and customtkinter lazily), which the host
-Python lacks. We stub the GUI modules so the pure orchestration logic is
-importable and testable.
+phonetic.app imports tkinter (and customtkinter lazily), which the host Python
+lacks. We stub the GUI modules so the pure orchestration logic is importable.
 """
 import sys
 import types
@@ -12,7 +12,6 @@ import pytest
 
 
 def _install_gui_stubs():
-    """Stub GUI / hardware modules the host Python lacks so phonetic.app imports."""
     if "tkinter" not in sys.modules:
         tk = types.ModuleType("tkinter")
         tk.Tk = object
@@ -23,7 +22,6 @@ def _install_gui_stubs():
         sys.modules["customtkinter"] = types.ModuleType("customtkinter")
     if "sounddevice" not in sys.modules:
         sys.modules["sounddevice"] = types.ModuleType("sounddevice")
-    # phonetic.tray needs an X display at import; stub the symbols app.py uses.
     if "phonetic.tray" not in sys.modules:
         tray = types.ModuleType("phonetic.tray")
         tray.TrayManager = object
@@ -33,29 +31,25 @@ def _install_gui_stubs():
 
 _install_gui_stubs()
 
-from phonetic.app import App  # noqa: E402
-from phonetic.config import Config, DEFAULT_PROFILE_ID, Profile  # noqa: E402
+from phonetic.app import App, UnknownProfileError  # noqa: E402
+from phonetic.config import Config, Profile  # noqa: E402
 
 
 def _cfg_with_profiles():
-    default = Profile(
-        id=DEFAULT_PROFILE_ID, name="Default", hotkey="<ctrl>+<alt>+r",
-        asr_model="", format_model="google/gemini-3-flash-preview",
-        system_prompt="DEFAULT PROMPT",
+    clean = Profile(
+        id="clean-id", name="Clean", hotkey="<ctrl>+<alt>+r",
+        model="google/gemini-3-flash-preview", asr_model="", format_model="",
+        system_prompt="CLEAN PROMPT",
     )
     work = Profile(
         id="work-id", name="Work", hotkey="<ctrl>+<alt>+w",
-        asr_model="nvidia/parakeet-tdt-0.6b-v3", format_model="openai/gpt-4o",
-        system_prompt="WORK PROMPT",
+        model="", asr_model="nvidia/parakeet-tdt-0.6b-v3",
+        format_model="openai/gpt-4o", system_prompt="WORK PROMPT",
     )
     return Config(
         openrouter_api_key="sk-test",
-        model="google/gemini-3-flash-preview",
-        hotkey="<ctrl>+<alt>+r",
         sample_rate=16000, channels=1, device=None,
-        notify=True, system_prompt="DEFAULT PROMPT",
-        asr_model="", format_model="google/gemini-3-flash-preview",
-        profiles=[default, work],
+        notify=True, profiles=[clean, work],
     )
 
 
@@ -63,23 +57,18 @@ def test_resolve_profile_by_id():
     app = App(headless=True)
     app._cfg = _cfg_with_profiles()
     assert app._resolve_profile("work-id").name == "Work"
-    assert app._resolve_profile(DEFAULT_PROFILE_ID).name == "Default"
+    assert app._resolve_profile("clean-id").name == "Clean"
 
 
-def test_resolve_profile_blank_uses_first():
-    """Keyless triggers (tray, Wayland SIGUSR1) pass a blank id and get the
-    first/primary profile."""
+def test_resolve_profile_blank_raises():
+    """No default profile: a blank id is an error, not a fallback to 'first'."""
     app = App(headless=True)
     app._cfg = _cfg_with_profiles()
-    assert app._resolve_profile("").id == DEFAULT_PROFILE_ID
+    with pytest.raises(UnknownProfileError):
+        app._resolve_profile("")
 
 
 def test_resolve_profile_unknown_id_raises():
-    """A hotkey carrying a profile_id that matches no profile fails loudly
-    rather than silently recording with a fallback."""
-    import pytest
-    from phonetic.app import UnknownProfileError
-
     app = App(headless=True)
     app._cfg = _cfg_with_profiles()
     with pytest.raises(UnknownProfileError):
@@ -93,6 +82,7 @@ def test_transcribe_worker_uses_profile_models(monkeypatch):
     captured = {}
 
     def fake_transcribe(cfg, audio, sample_rate):
+        captured["model"] = cfg.model
         captured["asr_model"] = cfg.asr_model
         captured["format_model"] = cfg.format_model
         captured["system_prompt"] = cfg.system_prompt
@@ -104,29 +94,40 @@ def test_transcribe_worker_uses_profile_models(monkeypatch):
     assert captured["asr_model"] == "nvidia/parakeet-tdt-0.6b-v3"
     assert captured["format_model"] == "openai/gpt-4o"
     assert captured["system_prompt"] == "WORK PROMPT"
-    # Result is posted back to the queue.
     msg = app._msg_queue.get_nowait()
     assert msg == ("transcription_done", "result")
 
 
-def test_transcribe_worker_default_profile(monkeypatch):
+def test_transcribe_worker_blank_model_uses_default(monkeypatch):
+    from phonetic.constants import DEFAULT_MODEL
     app = App(headless=True)
     app._cfg = _cfg_with_profiles()
     captured = {}
 
     def fake_transcribe(cfg, audio, sample_rate):
-        captured["asr_model"] = cfg.asr_model
-        captured["system_prompt"] = cfg.system_prompt
+        # Work profile leaves model blank => single-call/format model defaults.
+        captured["model"] = cfg.model
+        captured["format_model"] = cfg.format_model
         return "ok"
 
     monkeypatch.setattr("phonetic.app.transcribe", fake_transcribe)
-    app._transcribe_worker(np.zeros(100, dtype=np.float32), 16000, DEFAULT_PROFILE_ID)
-    # Default profile => legacy single-call (blank asr_model).
-    assert captured["asr_model"] == ""
-    assert captured["system_prompt"] == "DEFAULT PROMPT"
+    app._transcribe_worker(np.zeros(100, dtype=np.float32), 16000, "work-id")
+    assert captured["model"] == DEFAULT_MODEL
+    # format_model is explicit on the work profile, so it wins.
+    assert captured["format_model"] == "openai/gpt-4o"
+
+
+def test_transcribe_worker_unknown_profile_posts_error(monkeypatch):
+    app = App(headless=True)
+    app._cfg = _cfg_with_profiles()
+    monkeypatch.setattr("phonetic.app.transcribe", lambda *a: "x")
+    app._transcribe_worker(np.zeros(10, dtype=np.float32), 16000, "ghost")
+    cmd, payload = app._msg_queue.get_nowait()
+    assert cmd == "transcription_error"
 
 
 # --- profile switch while recording ---------------------------------------
+
 
 class _FakeRecorder:
     def __init__(self):
@@ -141,7 +142,6 @@ class _FakeRecorder:
     def stop(self):
         self.is_recording = False
         self._stops += 1
-        # Return a tiny-but-nonempty buffer (too short to transcribe).
         return np.zeros(10, dtype=np.float32)
 
     def peek_level(self):
@@ -156,16 +156,14 @@ def test_profile_switch_while_recording(monkeypatch):
     monkeypatch.setattr(app, "_check_mic_permission", lambda: True)
     monkeypatch.setattr(app, "_notify", lambda *a, **k: None)
 
-    # Start recording with the default profile.
-    app._toggle_recording(DEFAULT_PROFILE_ID)
+    app._toggle_recording("clean-id")
     assert rec.is_recording is True
-    assert app._recording_profile_id == DEFAULT_PROFILE_ID
+    assert app._recording_profile_id == "clean-id"
 
-    # A different profile's hotkey fires: stop current, start new.
     app._toggle_recording("work-id")
-    assert rec.is_recording is True  # recording again for the new profile
+    assert rec.is_recording is True
     assert app._recording_profile_id == "work-id"
-    assert rec._stops == 1  # the first recording was stopped
+    assert rec._stops == 1
 
 
 def test_same_profile_hotkey_while_recording_stops(monkeypatch):
@@ -178,7 +176,6 @@ def test_same_profile_hotkey_while_recording_stops(monkeypatch):
 
     app._toggle_recording("work-id")
     assert rec.is_recording is True
-    # Same profile fires again => stop.
     app._toggle_recording("work-id")
     assert rec.is_recording is False
     assert rec._stops == 1
