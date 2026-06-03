@@ -1,5 +1,5 @@
 """Wave 1 config tests: two-stage fields load/save + backward compat."""
-from phonetic.config import Config, load_config, save_config
+from phonetic.config import Config, Profile, load_config, save_config
 from phonetic.constants import DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
 
 
@@ -49,6 +49,8 @@ def test_explicit_format_model_used(isolated_config, monkeypatch):
 
 
 def test_save_load_round_trip(isolated_config, monkeypatch):
+    """Global config.env fields round-trip; per-hotkey transcription settings
+    round-trip through profiles.json, not config.env."""
     cfg = Config(
         openrouter_api_key="sk-roundtrip",
         model="chat/model",
@@ -61,19 +63,30 @@ def test_save_load_round_trip(isolated_config, monkeypatch):
         auto_start=True,
         asr_model="nvidia/parakeet-tdt-0.6b-v3",
         format_model="openai/gpt-4o",
+        profiles=[Profile(
+            id="p1", name="Default", hotkey="<ctrl>+<alt>+r",
+            asr_model="nvidia/parakeet-tdt-0.6b-v3",
+            format_model="openai/gpt-4o", system_prompt="custom prompt",
+        )],
     )
     save_config(cfg)
 
     loaded = load_config(require_key=True)
+    # Global fields persist via config.env.
     assert loaded.openrouter_api_key == "sk-roundtrip"
     assert loaded.model == "chat/model"
-    assert loaded.asr_model == "nvidia/parakeet-tdt-0.6b-v3"
-    assert loaded.format_model == "openai/gpt-4o"
-    assert loaded.system_prompt == "custom prompt"
     assert loaded.auto_start is True
+    # Per-hotkey transcription persists via profiles.json (config.env no longer
+    # carries ASR_MODEL/FORMAT_MODEL/SYSTEM_PROMPT).
+    assert loaded.profiles[0].asr_model == "nvidia/parakeet-tdt-0.6b-v3"
+    assert loaded.profiles[0].format_model == "openai/gpt-4o"
+    assert loaded.profiles[0].system_prompt == "custom prompt"
 
 
-def test_save_serializes_new_fields(isolated_config):
+def test_save_omits_per_profile_keys_from_config_env(isolated_config):
+    """config.env must NOT contain the per-profile keys — they live in
+    profiles.json. Writing them to config.env would be a dead, misleading
+    mirror (they are never read back at transcribe time)."""
     cfg = Config(
         openrouter_api_key="sk-x",
         model="m",
@@ -88,7 +101,8 @@ def test_save_serializes_new_fields(isolated_config):
     )
     path = save_config(cfg)
     text = path.read_text(encoding="utf-8")
-    assert "ASR_MODEL=" in text
-    assert "FORMAT_MODEL=" in text
-    assert "nvidia/parakeet-tdt-0.6b-v3" in text
-    assert "openai/gpt-4o" in text
+    assert "ASR_MODEL=" not in text
+    assert "FORMAT_MODEL=" not in text
+    assert "SYSTEM_PROMPT=" not in text
+    # The global single-call model is still present.
+    assert "MODEL=" in text

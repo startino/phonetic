@@ -71,23 +71,6 @@ class Config:
     # Fields that are auto-detected and never saved
     _AUTO_FIELDS: ClassVar[set[str]] = {"sample_rate", "channels", "device"}
 
-    # Fields to persist
-    _SAVE_FIELDS: ClassVar[set[str]] = {
-        "openrouter_api_key", "model", "hotkey", "notify", "system_prompt",
-        "auto_start", "asr_model", "format_model",
-    }
-
-    _FIELD_ENV_MAP: ClassVar[dict[str, str]] = {
-        "openrouter_api_key": "OPENROUTER_API_KEY",
-        "model": "MODEL",
-        "hotkey": "HOTKEY",
-        "notify": "NOTIFY",
-        "system_prompt": "SYSTEM_PROMPT",
-        "auto_start": "AUTO_START",
-        "asr_model": "ASR_MODEL",
-        "format_model": "FORMAT_MODEL",
-    }
-
 
 def _config_dir() -> Path:
     """Return platform-specific config directory."""
@@ -195,8 +178,20 @@ def _format_example_config_env(version: str) -> str:
 # here WILL be overwritten. To change your real settings, edit `config.env`
 # (same folder) or use the Settings window, then restart Phonetic.
 #
-# For multiple hotkeys — each with its own models and prompt — see the
-# companion `profiles.json.example` in this folder.
+# WHAT LIVES WHERE  (important):
+#   * config.env      — global app settings + the SINGLE-CALL transcription
+#                       model. The keys below are the COMPLETE set Phonetic
+#                       writes here.
+#   * profiles.json   — per-hotkey transcription: each hotkey's own ASR model,
+#                       formatting model, and system prompt. This is where the
+#                       two-stage pipeline and multiple hotkeys are configured.
+#                       See `profiles.json.example` in this folder.
+#
+# There is intentionally NO ASR_MODEL / FORMAT_MODEL / SYSTEM_PROMPT key here:
+# those are per-profile now and belong in profiles.json. (Older builds wrote
+# them here; for backward compatibility they are still HONORED if present in an
+# existing config.env, but they no longer take effect once profiles.json exists
+# — which it always does after first run — and Phonetic no longer writes them.)
 # ============================================================================
 
 # ----------------------------------------------------------------------------
@@ -207,8 +202,12 @@ def _format_example_config_env(version: str) -> str:
 OPENROUTER_API_KEY=sk-or-v1-...
 
 # ----------------------------------------------------------------------------
-# MODEL  — model used for the SINGLE-CALL path (when ASR_MODEL is blank).
-#   Must be audio-capable (accepts an audio attachment). Tips:
+# MODEL  — the transcription model used in two situations:
+#     1. The SINGLE-CALL path: any profile that leaves `asr_model` blank sends
+#        audio straight to this model (must be audio-capable).
+#     2. The fallback formatting model: a two-stage profile that leaves
+#        `format_model` blank uses this model for its cleanup step.
+#   Tips:
 #     - Avoid OpenAI / Anthropic / Google providers on an HK-region billing
 #       address — OpenRouter geo-blocks all three there.
 #   Examples:
@@ -219,36 +218,17 @@ OPENROUTER_API_KEY=sk-or-v1-...
 MODEL={DEFAULT_MODEL}
 
 # ----------------------------------------------------------------------------
-# TWO-STAGE PIPELINE  (optional — often cleaner output)
-#   When ASR_MODEL is set, transcription runs in two steps:
-#       audio --> ASR_MODEL (speech-to-text) --> FORMAT_MODEL (cleanup/format)
-#   Leave ASR_MODEL BLANK to use the single-call MODEL path above.
-#
-#   ASR_MODEL  — transcription-only, audio in / raw text out:
-#     nvidia/parakeet-tdt-0.6b-v3          <- fast, accurate, HK-safe
-#     openai/whisper-large-v3              <- (geo-limited)
-#
-#   FORMAT_MODEL — any chat model (NO audio needed); rewrites the raw text
-#                  per your SYSTEM_PROMPT. Falls back to MODEL when blank.
-#     mistralai/mistral-small-3.2-24b-instruct   <- cheap, fast cleanup
-#     anthropic/claude-3.5-haiku                 <- (geo-limited)
-#
-#   Example two-stage setup (uncomment both lines):
-#     ASR_MODEL=nvidia/parakeet-tdt-0.6b-v3
-#     FORMAT_MODEL=mistralai/mistral-small-3.2-24b-instruct
-# ----------------------------------------------------------------------------
-ASR_MODEL=
-FORMAT_MODEL=
-
-# ----------------------------------------------------------------------------
-# HOTKEY  — global record toggle, in pynput format.
+# HOTKEY  — the PRIMARY record-toggle hotkey, in pynput format.
+#   This is also the hotkey for the built-in default profile and the one the
+#   tray "Start Recording" button + Wayland SIGUSR1 trigger use.
 #   Modifiers: <ctrl>  <alt>  <cmd>  <shift>   (combine with '+')
 #   Examples:
 #     <ctrl>+<alt>+r        <- Linux / Windows default
 #     <cmd>+<shift>+r       <- macOS default
 #     <ctrl>+<alt>+space
 #   On Wayland, recording also toggles on SIGUSR1:  kill -USR1 <pid>
-#   Want SEVERAL hotkeys? Define them in profiles.json (see the example file).
+#   Want SEVERAL hotkeys, each with its own models/prompt? That's what
+#   profiles.json is for — see profiles.json.example.
 # ----------------------------------------------------------------------------
 HOTKEY=<ctrl>+<alt>+r
 
@@ -261,17 +241,6 @@ NOTIFY=1
 # AUTO_START  — launch Phonetic at login.   1 = on, 0 = off
 # ----------------------------------------------------------------------------
 AUTO_START=0
-
-# ----------------------------------------------------------------------------
-# SYSTEM_PROMPT  — instruction that shapes the output. A few ideas:
-#     Verbatim:    "Transcribe verbatim. Output only the transcription."
-#     Bullets:     "Summarise what was said into concise bullet points."
-#     Email:       "Rewrite the speech as a polite, well-structured email."
-#     Code:        "Format spoken code as a fenced code block. No prose."
-#   Leave blank to use the built-in default (shown below): clean formatting,
-#   punctuation, paragraphing, filler/self-correction removal, words unchanged.
-# ----------------------------------------------------------------------------
-SYSTEM_PROMPT="{DEFAULT_SYSTEM_PROMPT.replace(chr(10), ' ').replace('"', chr(92) + '"').strip()}"
 """
 
 
@@ -473,24 +442,23 @@ def _format_config_env(cfg: Config) -> str:
         escaped = s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
         return f'"{escaped}"'
 
+    # NOTE: ASR_MODEL / FORMAT_MODEL / SYSTEM_PROMPT are intentionally NOT
+    # written here. They are per-profile settings (profiles.json) — the
+    # transcribe path reads them from the active profile, never from these
+    # top-level fields. load_config() still HONORS them if a legacy config.env
+    # already contains them (back-compat), but we no longer emit them, so a
+    # freshly-saved config.env stays consistent with config.env.example.
     return f"""\
 # phonetic configuration
-# See .env.example for full documentation.
+# See config.env.example (same folder) for full documentation.
 
 # Required: OpenRouter API key (https://openrouter.ai/settings/keys)
 OPENROUTER_API_KEY={_quote(cfg.openrouter_api_key)}
 
-# Model to use for transcription (OpenRouter model ID)
+# Single-call transcription model + fallback formatting model (OpenRouter ID).
 MODEL={_quote(cfg.model)}
 
-# ASR model for two-stage pipeline. Blank = legacy single multimodal call.
-# Example: nvidia/parakeet-tdt-0.6b-v3
-ASR_MODEL={_quote(cfg.asr_model)}
-
-# Formatting model for two-stage pipeline. Blank = falls back to MODEL.
-FORMAT_MODEL={_quote(cfg.format_model)}
-
-# Hotkey (pynput format; on Wayland also supports SIGUSR1)
+# Primary record-toggle hotkey (pynput format; on Wayland also supports SIGUSR1)
 HOTKEY={_quote(cfg.hotkey)}
 
 # Notifications: 1 to enable, 0 to disable
@@ -498,9 +466,6 @@ NOTIFY={_quote(cfg.notify)}
 
 # Auto-start at login: 1 to enable, 0 to disable
 AUTO_START={_quote(cfg.auto_start)}
-
-# System prompt sent to the model (default: echoai transcription prompt)
-SYSTEM_PROMPT={_quote(cfg.system_prompt)}
 """
 
 
