@@ -28,6 +28,13 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    # Put the phonetic CLI on PATH. This is REQUIRED for the Wayland workflow:
+    # users run `phonetic --list-profiles`, and compositor keybindings exec
+    # `phonetic --trigger <profile>`. Without it only the absolute store path
+    # works, so the shell reports "Unknown command: phonetic" and every trigger
+    # keybinding silently fails. Enabling the service must make its CLI usable.
+    environment.systemPackages = [ cfg.package ];
+
     systemd.user.services.phonetic = {
       description = "Phonetic speech-to-text";
       after = [ "graphical-session.target" ];
