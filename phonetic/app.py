@@ -10,8 +10,9 @@ import numpy as np
 
 from .clipboard import copy_to_clipboard
 from .config import Config, Profile, load_config
+from .control import ControlChannel
 from .log import log as _log
-from .constants import DEFAULT_MODEL, MIN_DURATION_SECS, WARN_DURATION_SECS
+from .constants import MIN_DURATION_SECS, WARN_DURATION_SECS
 from .hotkeys import HotkeyManager
 from .notifications import notify
 from .recorder import Recorder
@@ -20,17 +21,17 @@ from .tray import TrayManager
 
 
 class UnknownProfileError(Exception):
-    """A hotkey fired carrying a profile_id that matches no configured profile.
+    """A trigger fired carrying a profile_id that matches no configured profile.
 
-    This means a stale/dangling hotkey registration survived a profile being
-    deleted or its id changing. We raise instead of silently recording with
-    some other profile, so the failure is visible rather than producing a
-    transcription under the wrong profile's models/prompt.
+    This means a stale/dangling hotkey registration (or an external --trigger
+    with a bad id) survived a profile being deleted or its id changing. We raise
+    instead of recording with some other profile, so the failure is visible
+    rather than producing a transcription under the wrong profile's models.
     """
 
     def __init__(self, profile_id: str) -> None:
         self.profile_id = profile_id
-        super().__init__(f"no profile matches hotkey profile_id={profile_id!r}")
+        super().__init__(f"no profile matches profile_id={profile_id!r}")
 
 
 class App:
@@ -49,6 +50,7 @@ class App:
         self._processing_lock = threading.Lock()
         self._tray: Optional[TrayManager] = None
         self._hotkeys: Optional[HotkeyManager] = None
+        self._control: Optional[ControlChannel] = None  # FIFO trigger channel
         self._root: Optional[object] = None  # tk.Tk when in GUI mode
         self._settings_win = None  # SettingsWindow ref for hotkey routing
         self._poll_count = 0  # message poll counter for heartbeat logging
@@ -102,6 +104,9 @@ class App:
             self._root.quit()
             return
 
+        if self._cfg is not None:
+            from .log import set_verbose
+            set_verbose(self._cfg.verbose)
         _log(f"_run_gui: config loaded, cfg is None = {self._cfg is None}")
         if self._cfg is None:
             # First run — mic permission, then wizard
@@ -148,36 +153,23 @@ class App:
             messagebox.showerror("Phonetic", str(e))
             self._root.quit()
             return
-        default_hotkey = "<cmd>+<shift>+r" if sys.platform == "darwin" else "<ctrl>+<alt>+r"
         stub_cfg = Config(
             openrouter_api_key="",
-            model=DEFAULT_MODEL,
-            hotkey=default_hotkey,
             sample_rate=sample_rate,
             channels=channels,
             device=device,
             notify=True,
-            system_prompt="",
             auto_start=True,
         )
 
-        # Start an early hotkey listener so the user can verify their hotkey
-        # works while still in the wizard.  Same timing as the non-first-run
-        # path (before mainloop) which avoids the TSM crash on Sequoia.
-        _log(f"first_run_wizard: starting early hotkey listener for {stub_cfg.hotkey!r}")
-
-        def _on_hotkey_toggle_firstrun():
-            _log(f"on_hotkey_toggle_firstrun: FIRED on thread={threading.current_thread().name} id={threading.get_ident()}")
-            _log(f"on_hotkey_toggle_firstrun: putting toggle_recording in queue (qsize before={self._msg_queue.qsize()})")
-            self._msg_queue.put(("toggle_recording",))
-            _log(f"on_hotkey_toggle_firstrun: queued (qsize after={self._msg_queue.qsize()})")
-
-        self._hotkeys = HotkeyManager(
-            stub_cfg.hotkey,
-            on_toggle=_on_hotkey_toggle_firstrun,
-        )
+        # Start an early hotkey manager so the user can verify a hotkey works
+        # while still in the wizard. Same timing as the non-first-run path
+        # (before mainloop) which avoids the TSM crash on Sequoia. The wizard
+        # registers the profile-in-progress via on_hotkey_change.
+        _log("first_run_wizard: starting early hotkey manager")
+        self._hotkeys = HotkeyManager("", on_toggle=lambda: None)
         self._hotkeys.start()
-        _log(f"first_run_wizard: early hotkey listener started, type={type(self._hotkeys).__name__}")
+        _log(f"first_run_wizard: early hotkey manager started, type={type(self._hotkeys).__name__}")
 
         def on_first_run_save(cfg: Config) -> None:
             _log("on_first_run_save: wizard save triggered")
@@ -219,31 +211,49 @@ class App:
             device=self._cfg.device,
         )
 
-        # Start tray
+        # Start tray, populated with every profile as a directly-listed entry.
         self._tray = TrayManager(self._msg_queue)
         self._tray.set_device(self._cfg.device, self._cfg.device)
+        self._tray.set_profiles(self._cfg.profiles)
         self._tray.run()
 
-        # Start hotkeys
-        def _on_hotkey_toggle_services():
-            _log(f"on_hotkey_toggle_services: FIRED on thread={threading.current_thread().name} id={threading.get_ident()}")
-            _log(f"on_hotkey_toggle_services: putting toggle_recording in queue (qsize={self._msg_queue.qsize()})")
-            self._msg_queue.put(("toggle_recording",))
-
-        self._hotkeys = HotkeyManager(
-            self._cfg.hotkey,
-            on_toggle=_on_hotkey_toggle_services,
-        )
+        # Start the hotkey manager (no single global hotkey — profiles own them).
+        # The base on_toggle is unused now; every recording carries a profile id.
+        self._hotkeys = HotkeyManager("", on_toggle=lambda: None)
         self._hotkeys.start()
-        _log(f"start_services: hotkey listener started, type={type(self._hotkeys).__name__}")
+        _log(f"start_services: hotkey manager started, type={type(self._hotkeys).__name__}")
 
-        # Register all per-keybind profiles so each profile's hotkey works.
+        # Register each profile's own hotkey.
         self._register_profile_hotkeys()
+
+        # Start the control channel so `phonetic --trigger <id>` works (Wayland
+        # per-profile triggers + any external automation).
+        self._start_control_channel()
 
         # Check for updates in the background
         threading.Thread(target=self._check_for_update, daemon=True).start()
 
-        print(f"Ready. Press {self._cfg.hotkey} to start/stop recording.")
+        n = len(self._cfg.profiles)
+        if n:
+            print(f"Ready. {n} profile(s) loaded — press a profile's hotkey, "
+                  f"or pick one from the tray, to record.")
+        else:
+            print("Ready, but no profiles are configured. Open Settings to add "
+                  "one — there is no default profile.")
+            self._notify("No profiles configured — open Settings to add one",
+                         "normal")
+
+    def _start_control_channel(self) -> None:
+        """Start the FIFO control channel that maps --trigger <id> to a profile."""
+        def _on_trigger(profile_id: str) -> None:
+            _log(f"control: dispatching trigger profile_id={profile_id!r}")
+            self._msg_queue.put(("toggle_recording", profile_id))
+
+        self._control = ControlChannel(_on_trigger)
+        if self._control.start():
+            _log("start_services: control channel started")
+        else:
+            _log("start_services: control channel unavailable")
 
     def _register_profile_hotkeys(self) -> None:
         """Register every profile's hotkey on the active hotkey manager."""
@@ -336,21 +346,17 @@ class App:
 
     # --- Profile resolution ---
 
-    def _resolve_profile(self, profile_id: str = "") -> Optional[Profile]:
-        """Return the Profile for profile_id.
+    def _resolve_profile(self, profile_id: str) -> Profile:
+        """Return the Profile for profile_id. Always requires an explicit id.
 
-        A blank profile_id comes from the keyless triggers (tray/menu-bar
-        action, Wayland SIGUSR1) and resolves to the first profile — the
-        primary one. A non-blank profile_id comes from a per-keybind hotkey
-        registration and MUST match an existing profile; if it does not, we
-        raise ``UnknownProfileError`` instead of falling back, because a hotkey
-        firing for a profile that no longer exists is a bug to surface, not to
-        paper over by recording with the wrong profile.
+        There is no default profile and no blank→first fallback: every trigger
+        (a profile's own hotkey, a tray selection, or an external --trigger)
+        names exactly one profile. A blank or unknown id raises
+        ``UnknownProfileError`` so the failure is surfaced rather than papered
+        over by recording with the wrong profile.
         """
-        if self._cfg is None or not self._cfg.profiles:
-            return None
-        if not profile_id:
-            return self._cfg.profiles[0]
+        if self._cfg is None or not self._cfg.profiles or not profile_id:
+            raise UnknownProfileError(profile_id)
         for p in self._cfg.profiles:
             if p.id == profile_id:
                 return p
@@ -401,16 +407,16 @@ class App:
             profile = self._resolve_profile(profile_id)
         except UnknownProfileError as e:
             _log(f"toggle_recording: REFUSING to record — {e}")
-            print(f"Hotkey fired for unknown profile {e.profile_id!r}; not "
+            print(f"Trigger fired for unknown profile {e.profile_id!r}; not "
                   f"recording. A stale hotkey is registered for a deleted "
                   f"profile — fix your profiles.", file=sys.stderr)
-            self._notify("Hotkey points at a profile that no longer exists — "
+            self._notify("Trigger points at a profile that no longer exists — "
                          "not recording", "critical")
             return
-        self._recording_profile_id = profile.id if profile is not None else profile_id
+        self._recording_profile_id = profile.id
         _log(f"toggle_recording: starting recording for profile_id={self._recording_profile_id!r} "
-             f"name={profile.name if profile else '?'!r}")
-        print(f"Recording... Press {self._cfg.hotkey} to stop.")
+             f"name={profile.name!r}")
+        print(f"Recording with profile {profile.name!r}... press its hotkey to stop.")
         try:
             self._rec.start()
             _log(f"toggle_recording: recording started, device={self._rec.device} sr={self._rec.sample_rate}")
@@ -421,7 +427,7 @@ class App:
             return
         self._notify("Recording started", "low", persist=True)
         if self._tray:
-            self._tray.set_state(True)
+            self._tray.set_state(True, self._recording_profile_id)
         # Schedule early audio check after 1 second to catch silent input
         if self._root is not None:
             self._root.after(1000, self._check_early_audio)
@@ -492,26 +498,26 @@ class App:
             print(msg, file=sys.stderr)
             self._notify(msg, "normal", replace=True)
 
-    def _transcribe_worker(self, audio: np.ndarray, sample_rate: int, profile_id: str = "") -> None:
+    def _transcribe_worker(self, audio: np.ndarray, sample_rate: int, profile_id: str) -> None:
         """Run transcription in a background thread and post result back.
 
-        Uses the resolved profile's models + system prompt by overriding the
-        relevant fields on a shallow copy of the config.
+        Builds the transcribe config entirely from the active profile — model,
+        ASR/format models, and system prompt all come from the profile, with the
+        built-in defaults filling any blanks. There is no global model anymore.
         """
+        from .constants import DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
         try:
-            cfg = self._cfg
             profile = self._resolve_profile(profile_id)
-            if profile is not None:
-                _log(f"transcribe_worker: profile id={profile.id!r} name={profile.name!r} "
-                     f"asr={profile.asr_model!r} format={profile.format_model!r}")
-                cfg = dataclasses.replace(
-                    self._cfg,
-                    asr_model=profile.asr_model,
-                    format_model=profile.format_model or self._cfg.model,
-                    system_prompt=profile.system_prompt or self._cfg.system_prompt,
-                )
-            else:
-                _log("transcribe_worker: no profile resolved, using top-level config")
+            model = profile.model or DEFAULT_MODEL
+            _log(f"transcribe_worker: profile id={profile.id!r} name={profile.name!r} "
+                 f"model={model!r} asr={profile.asr_model!r} format={profile.format_model!r}")
+            cfg = dataclasses.replace(
+                self._cfg,
+                model=model,
+                asr_model=profile.asr_model,
+                format_model=profile.format_model or model,
+                system_prompt=profile.system_prompt or DEFAULT_SYSTEM_PROMPT,
+            )
             text = transcribe(cfg, audio, sample_rate).strip()
             self._msg_queue.put(("transcription_done", text))
         except Exception as e:
@@ -581,15 +587,12 @@ class App:
             from .autostart import set_autostart
             set_autostart(cfg.auto_start)
 
-            # Re-register all profile hotkeys (covers added/removed/changed
-            # profiles and the default profile's hotkey).
-            if self._hotkeys is not None and cfg.profiles:
+            # Re-register every profile's hotkey, and refresh the tray's
+            # directly-listed profile entries (covers add/remove/rename/rebind).
+            if self._hotkeys is not None:
                 self._register_profile_hotkeys()
-            elif self._hotkeys is not None:
-                try:
-                    self._hotkeys.update_hotkey(cfg.hotkey)
-                except ValueError as e:
-                    print(f"Hotkey error: {e}", file=sys.stderr)
+            if self._tray is not None:
+                self._tray.set_profiles(cfg.profiles)
 
         def on_settings_hotkey_change(new_hotkey: str) -> None:
             _log(f"on_settings_hotkey_change: {new_hotkey!r}")
@@ -716,6 +719,8 @@ class App:
             self._rec.stop()
         if self._hotkeys:
             self._hotkeys.stop()
+        if self._control:
+            self._control.stop()
         if self._tray:
             self._tray.stop()
 
@@ -732,6 +737,8 @@ class App:
             print("OPENROUTER_API_KEY is required", file=sys.stderr)
             sys.exit(1)
 
+        from .log import set_verbose
+        set_verbose(cfg.verbose)
         self._cfg = cfg
         self._rec = Recorder(
             sample_rate=cfg.sample_rate,
@@ -739,32 +746,34 @@ class App:
             device=cfg.device,
         )
 
-        # Start hotkeys (includes SIGUSR1 on Linux)
-        def _on_hotkey_toggle_headless():
-            _log(f"on_hotkey_toggle_headless: FIRED on thread={threading.current_thread().name} id={threading.get_ident()}")
-            self._msg_queue.put(("toggle_recording",))
-
-        self._hotkeys = HotkeyManager(
-            cfg.hotkey,
-            on_toggle=_on_hotkey_toggle_headless,
-        )
+        # Hotkey manager with no global hotkey — each profile owns its own.
+        self._hotkeys = HotkeyManager("", on_toggle=lambda: None)
         self._hotkeys.start()
-        _log(f"run_headless: hotkey listener started, type={type(self._hotkeys).__name__}")
+        _log(f"run_headless: hotkey manager started, type={type(self._hotkeys).__name__}")
 
-        # Register all per-keybind profiles so each profile's hotkey works.
+        # Register each profile's own hotkey.
         self._register_profile_hotkeys()
+
+        # Start the control channel so `phonetic --trigger <id>` records a
+        # specific profile (the Wayland path, where hotkeys can't be grabbed).
+        self._start_control_channel()
 
         # Check for updates in the background
         threading.Thread(target=self._check_for_update, daemon=True).start()
 
+        n = len(cfg.profiles)
         if self._hotkeys.signal_only:
-            print("Ready. Waiting for SIGUSR1 to start/stop recording.")
+            print(f"Ready. {n} profile(s) loaded. Global hotkeys are unavailable "
+                  f"here — trigger a profile with: phonetic --trigger <profile-id>")
         else:
-            print(f"Ready. Press {cfg.hotkey} to start/stop recording.")
-            if sys.platform.startswith("linux"):
-                from .platform_utils import _is_wayland
-                session_type = "wayland" if _is_wayland() else "x11"
-                print(f"Session: {session_type}")
+            print(f"Ready. {n} profile(s) loaded — press a profile's hotkey to record.")
+        if sys.platform.startswith("linux"):
+            from .platform_utils import _is_wayland
+            session_type = "wayland" if _is_wayland() else "x11"
+            print(f"Session: {session_type}")
+        if not n:
+            print("No profiles configured. Edit profiles.json (see "
+                  "profiles.json.example) and restart.", file=sys.stderr)
 
         print("Press Ctrl+C to exit.")
         try:

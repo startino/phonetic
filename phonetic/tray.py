@@ -65,6 +65,7 @@ class TrayManager:
         self._msg_queue = msg_queue
         self._icon: Optional["pystray.Icon"] = None
         self._recording = False
+        self._recording_profile_id = ""  # which profile is mid-recording
         self._idle_icon = _load_icon("icon_tray.png")
         # Try pre-generated recording icon, fall back to runtime overlay
         rec_path = os.path.join(_assets_dir(), "icon_tray_recording.png")
@@ -78,6 +79,17 @@ class TrayManager:
         self._selected_device: Optional[int] = None  # None = "Default"
         self._default_device: Optional[int] = None
         self._input_devices: list[dict] = []
+
+        # Profiles listed directly in the menu (id, name, hotkey) so the user
+        # picks exactly which profile to record with. There is no default.
+        self._profiles: list = []
+
+    def set_profiles(self, profiles: list) -> None:
+        """Set the profiles shown as direct record entries in the tray menu."""
+        self._profiles = list(profiles)
+        if self._icon is not None:
+            self._icon.menu = self._build_menu()
+            self._icon.update_menu()
 
     def set_device(self, device: Optional[int], default_device: Optional[int]) -> None:
         """Set the current and default device (called by App after init)."""
@@ -134,6 +146,40 @@ class TrayManager:
         if self._icon is not None:
             self._icon.update_menu()
 
+    def _make_profile_callback(self, profile_id: str):
+        """Factory to avoid closure-over-loop-variable bug."""
+        def callback(_icon, _item):
+            self._msg_queue.put(("toggle_recording", profile_id))
+        return callback
+
+    def _profile_menu_items(self) -> list:
+        """One direct record entry per profile — no submenu, no generic toggle.
+
+        Each entry records with THAT profile. While recording, the active
+        profile's row becomes 'Stop' and the others are disabled so the only
+        next action is to stop the in-flight recording.
+        """
+        if not self._profiles:
+            return [pystray.MenuItem("No profiles — open Settings", None, enabled=False)]
+
+        items = []
+        for p in self._profiles:
+            pid = getattr(p, "id", "")
+            name = getattr(p, "name", "") or "(unnamed)"
+            hotkey = getattr(p, "hotkey", "")
+            is_active = self._recording and pid == self._recording_profile_id
+            if is_active:
+                label = f"■  Stop: {name}"
+            else:
+                label = f"Record: {name}" + (f"  ({hotkey})" if hotkey else "")
+            items.append(pystray.MenuItem(
+                label,
+                self._make_profile_callback(pid),
+                # While recording, only the active profile's row is enabled.
+                enabled=(not self._recording) or is_active,
+            ))
+        return items
+
     def _build_menu(self) -> "pystray.Menu":
         return pystray.Menu(
             pystray.MenuItem(
@@ -142,10 +188,7 @@ class TrayManager:
                 enabled=False,
             ),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                lambda _: "Stop Recording" if self._recording else "Start Recording",
-                lambda _icon, _item: self._msg_queue.put("toggle_recording"),
-            ),
+            *self._profile_menu_items(),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Audio Device",
@@ -157,9 +200,14 @@ class TrayManager:
             pystray.MenuItem("Quit", lambda _icon, _item: self._msg_queue.put("quit")),
         )
 
-    def set_state(self, recording: bool) -> None:
-        """Update tray icon to reflect recording state."""
+    def set_state(self, recording: bool, profile_id: str = "") -> None:
+        """Update tray icon + menu to reflect recording state.
+
+        ``profile_id`` is the profile currently recording (so its row shows the
+        Stop affordance and the others disable). Empty when idle.
+        """
         self._recording = recording
+        self._recording_profile_id = profile_id if recording else ""
         if self._icon is not None:
             self._icon.icon = self._recording_icon if recording else self._idle_icon
             self._icon.menu = self._build_menu()
