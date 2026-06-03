@@ -40,7 +40,12 @@ in {
         RestartSec = 2;
         Environment = [ "PYTHONUNBUFFERED=1" ];
       } // lib.optionalAttrs (cfg.environmentFile != null) {
-        EnvironmentFile = cfg.environmentFile;
+        # Prefix with "-" so a missing env file is non-fatal. The app also reads
+        # its key directly from .env / config.env in the config dir, so a missing
+        # EnvironmentFile must NOT block startup (otherwise the service can crash
+        # with Result=resources before ever exec'ing — e.g. if the file was
+        # renamed and the new one doesn't exist yet).
+        EnvironmentFile = "-" + cfg.environmentFile;
       };
     };
   };
