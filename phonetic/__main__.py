@@ -96,11 +96,26 @@ def main() -> None:
         help="Run in headless mode (no GUI, no tray icon)",
     )
     parser.add_argument(
+        "--trigger",
+        metavar="PROFILE_ID",
+        default=None,
+        help="Tell the already-running Phonetic to record with the profile "
+             "whose id is PROFILE_ID, then exit. Bind a Wayland DE shortcut to "
+             "this (one per profile). Profile ids are shown in Settings.",
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {_get_version()}",
     )
     args = parser.parse_args()
+
+    # --trigger is a thin client: send the profile id to the running app's
+    # control channel and exit. It does NOT start a second app instance.
+    if args.trigger is not None:
+        from .control import send_trigger
+        ok = send_trigger(args.trigger)
+        sys.exit(0 if ok else 1)
 
     headless = args.headless or not has_display()
     _log(f"headless={headless}")
