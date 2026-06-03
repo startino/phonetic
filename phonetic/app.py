@@ -17,7 +17,10 @@ from .hotkeys import HotkeyManager
 from .notifications import notify
 from .recorder import Recorder
 from .transcribe import transcribe
-from .tray import TrayManager
+# NOTE: do NOT import .tray at module top. pystray opens the X display at import
+# time and raises (not just ImportError) when there is no display — which would
+# crash --headless / systemd-service startup before main() even runs. The tray
+# is GUI-only; it is imported lazily in _start_services().
 
 
 class UnknownProfileError(Exception):
@@ -212,6 +215,8 @@ class App:
         )
 
         # Start tray, populated with every profile as a directly-listed entry.
+        # Imported lazily (GUI-only) — see the note at the top of this module.
+        from .tray import TrayManager
         self._tray = TrayManager(self._msg_queue)
         self._tray.set_device(self._cfg.device, self._cfg.device)
         self._tray.set_profiles(self._cfg.profiles)

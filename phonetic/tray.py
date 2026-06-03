@@ -8,7 +8,11 @@ from PIL import Image, ImageDraw
 
 try:
     import pystray
-except ImportError:
+except Exception:
+    # Broad on purpose: pystray selects a backend AT IMPORT and the X11 backend
+    # opens the display immediately, raising Xlib.error.DisplayNameError (NOT an
+    # ImportError) when there is no display. Catching only ImportError let that
+    # escape and crash any headless process that imported this module.
     pystray = None
 
 
