@@ -18,7 +18,7 @@
 
 python312Packages.buildPythonApplication rec {
   pname = "phonetic";
-  version = "0.6.6";
+  version = "0.6.7";
 
   src = lib.cleanSource ../.;
   pyproject = true;
