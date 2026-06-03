@@ -17,10 +17,13 @@ in {
       type = lib.types.nullOr lib.types.path;
       default = null;
       description = ''
-        Path to an environment file containing configuration (e.g. OPENROUTER_API_KEY).
-        This file is passed as EnvironmentFile to the systemd service.
+        Path to an environment file containing the OPENROUTER_API_KEY secret.
+        This file is passed as EnvironmentFile to the systemd service. App
+        toggles live in settings.json and per-hotkey transcription in
+        profiles.json (both in the config dir); only the secret needs to be
+        provided here.
       '';
-      example = "/home/user/.config/phonetic/config.env";
+      example = "/home/user/.config/phonetic/.env";
     };
   };
 
