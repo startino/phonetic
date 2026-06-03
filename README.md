@@ -180,15 +180,47 @@ This installs and starts the service. Other commands:
 
 ## Wayland
 
-Global key grabs are blocked on Wayland, so Phonetic can't listen for hotkeys directly. Instead, **each profile is triggered by its own command** — bind a desktop keyboard shortcut (in your DE's keyboard settings) per profile to:
+Global key grabs are blocked on Wayland — **no application can grab global hotkeys**, the compositor owns all input. So Phonetic can't listen for hotkeys directly; instead, **your compositor triggers each profile by command**. Bind one shortcut per profile to:
 
 ```bash
-phonetic --trigger <profile-id>
+phonetic --trigger <profile>          # <profile> = the profile NAME or its id
 ```
 
-`<profile-id>` is the `id` field of the profile in `profiles.json` (also shown next to each profile in the Settings window, with a Copy button). This gives full per-profile parity on Wayland — every profile records with its own model and prompt, exactly like a native hotkey on X11/macOS. There is no default profile and no single shared trigger.
+`<profile>` can be the profile's **name** (readable, e.g. `phonetic --trigger Work`) or its `id`. To see exactly what to bind, run:
 
-Under the hood, the running app listens on a control FIFO at `~/.cache/phonetic/control`; `phonetic --trigger <id>` writes the profile id to it and exits. If the app isn't running, the command prints a notice and exits non-zero (so you'll notice a misconfigured shortcut).
+```bash
+phonetic --list-profiles
+```
+
+which prints each profile's name, hotkey, and the ready-to-bind trigger command. This gives full per-profile parity on Wayland — every profile records with its own model and prompt, exactly like a native hotkey on X11/macOS. There is no default profile and no single shared trigger.
+
+### NixOS (declarative compositor bindings)
+
+Phonetic runs as a headless user service (`services.phonetic.enable = true`); the hotkeys live in your **compositor** config, one binding per profile. Examples (replace keys/names with your profiles from `phonetic --list-profiles`):
+
+**Hyprland** (home-manager):
+
+```nix
+wayland.windowManager.hyprland.settings.bind = [
+  "SUPER, W, exec, phonetic --trigger Work"
+  "SUPER, N, exec, phonetic --trigger \"Casual Notes\""
+];
+```
+
+**Sway** (home-manager):
+
+```nix
+wayland.windowManager.sway.config.keybindings = {
+  "Mod4+w" = "exec phonetic --trigger Work";
+  "Mod4+n" = "exec phonetic --trigger 'Casual Notes'";
+};
+```
+
+**KDE Plasma / GNOME:** add a Custom Shortcut per profile in the keyboard settings, command `phonetic --trigger <name>`.
+
+> **Migrating from the old single-key setup:** versions before v0.6.6 used a single `SIGUSR1` trigger (one global key, one profile). That's been replaced by `--trigger`, which supports *every* profile. Replace your old `kill -USR1 …` binding with one `phonetic --trigger <name>` binding per profile.
+
+Under the hood, the running app listens on a control FIFO at `~/.cache/phonetic/control`; `phonetic --trigger <profile>` resolves the name/id against the loaded profiles, writes to the FIFO, and exits. If the app isn't running, the command prints a notice and exits non-zero (so you'll notice a misconfigured shortcut).
 
 On X11/XWayland, profile hotkeys work directly — no per-profile commands needed.
 

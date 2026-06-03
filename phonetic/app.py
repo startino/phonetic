@@ -351,21 +351,28 @@ class App:
 
     # --- Profile resolution ---
 
-    def _resolve_profile(self, profile_id: str) -> Profile:
-        """Return the Profile for profile_id. Always requires an explicit id.
+    def _resolve_profile(self, profile_ref: str) -> Profile:
+        """Return the Profile matching profile_ref (its id, or its name).
 
         There is no default profile and no blank→first fallback: every trigger
         (a profile's own hotkey, a tray selection, or an external --trigger)
-        names exactly one profile. A blank or unknown id raises
-        ``UnknownProfileError`` so the failure is surfaced rather than papered
-        over by recording with the wrong profile.
+        names exactly one profile. Hotkeys/tray pass the exact id; the Wayland
+        ``phonetic --trigger <ref>`` CLI may pass the id OR the (case-insensitive)
+        profile name, so DE keybindings can use a readable label instead of a
+        UUID. A blank or unmatched ref raises ``UnknownProfileError`` so the
+        failure is surfaced rather than papered over by recording with the wrong
+        profile.
         """
-        if self._cfg is None or not self._cfg.profiles or not profile_id:
-            raise UnknownProfileError(profile_id)
+        if self._cfg is None or not self._cfg.profiles or not profile_ref:
+            raise UnknownProfileError(profile_ref)
         for p in self._cfg.profiles:
-            if p.id == profile_id:
+            if p.id == profile_ref:
                 return p
-        raise UnknownProfileError(profile_id)
+        ref_lower = profile_ref.strip().lower()
+        for p in self._cfg.profiles:
+            if p.name.strip().lower() == ref_lower:
+                return p
+        raise UnknownProfileError(profile_ref)
 
     # --- Recording logic (same as original main.py:301-351) ---
 
@@ -376,6 +383,16 @@ class App:
         with self._processing_lock:
             if self._processing:
                 return
+
+        # Normalize the incoming ref (id OR name, e.g. from `--trigger <name>`)
+        # to the canonical profile id up front, so the profile-switch comparison
+        # below and the stored _recording_profile_id are always ids. An unknown
+        # ref is left as-is and surfaced by _start_recording's resolve guard.
+        if profile_id:
+            try:
+                profile_id = self._resolve_profile(profile_id).id
+            except UnknownProfileError:
+                pass
 
         # If a DIFFERENT profile's hotkey fires while recording, stop the
         # current recording and immediately start a fresh one for the new

@@ -97,11 +97,19 @@ def main() -> None:
     )
     parser.add_argument(
         "--trigger",
-        metavar="PROFILE_ID",
+        metavar="PROFILE",
         default=None,
-        help="Tell the already-running Phonetic to record with the profile "
-             "whose id is PROFILE_ID, then exit. Bind a Wayland DE shortcut to "
-             "this (one per profile). Profile ids are shown in Settings.",
+        help="Tell the already-running Phonetic to record with PROFILE (its id "
+             "OR its name), then exit. This is how global hotkeys work on "
+             "Wayland: bind one DE/compositor shortcut per profile to "
+             "`phonetic --trigger <name>`. Run `phonetic --list-profiles` to "
+             "see what to bind.",
+    )
+    parser.add_argument(
+        "--list-profiles",
+        action="store_true",
+        help="Print each configured profile's name, id, and hotkey, then exit. "
+             "Use the name (or id) with --trigger to bind compositor shortcuts.",
     )
     parser.add_argument(
         "--version",
@@ -110,7 +118,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # --trigger is a thin client: send the profile id to the running app's
+    # --list-profiles is a thin client: read config + print, then exit.
+    if args.list_profiles:
+        _list_profiles()
+        sys.exit(0)
+
+    # --trigger is a thin client: send the profile ref to the running app's
     # control channel and exit. It does NOT start a second app instance.
     if args.trigger is not None:
         from .control import send_trigger
@@ -133,6 +146,31 @@ def main() -> None:
 def _get_version() -> str:
     from . import __version__
     return __version__
+
+
+def _list_profiles() -> None:
+    """Print configured profiles (name, id, hotkey) for binding compositor keys.
+
+    On Wayland, each profile is triggered by a DE shortcut bound to
+    `phonetic --trigger <name>`; this lists what to bind.
+    """
+    # Read profiles.json directly: listing must not depend on audio hardware
+    # (load_config runs device detection, which fails on headless/device-less
+    # boxes), and a thin client shouldn't spin up the full config pipeline.
+    from .config import _load_profiles
+    profiles = _load_profiles()
+    if not profiles:
+        print("No profiles configured. Open Settings (or edit profiles.json) "
+              "to add one.")
+        return
+    print(f"{'NAME':<24} {'HOTKEY':<22} TRIGGER COMMAND")
+    for p in profiles:
+        # Prefer the name for the trigger command (readable); quote if spaced.
+        ref = p.name if p.name and " " not in p.name else (f'"{p.name}"' if p.name else p.id)
+        print(f"{(p.name or '(unnamed)'):<24} {(p.hotkey or '-'):<22} "
+              f"phonetic --trigger {ref}")
+    print("\nOn Wayland, bind a compositor/DE shortcut to each TRIGGER COMMAND.")
+    print("On X11/macOS, the per-profile HOTKEY above works directly.")
 
 
 if __name__ == "__main__":

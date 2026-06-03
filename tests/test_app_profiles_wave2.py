@@ -60,6 +60,25 @@ def test_resolve_profile_by_id():
     assert app._resolve_profile("clean-id").name == "Clean"
 
 
+def test_resolve_profile_by_name():
+    """`phonetic --trigger <name>` (Wayland compositor binding) resolves by the
+    profile's name, case-insensitively, so DE shortcuts can use a readable label
+    instead of a UUID."""
+    app = App(headless=True)
+    app._cfg = _cfg_with_profiles()
+    assert app._resolve_profile("Work").id == "work-id"
+    assert app._resolve_profile("clean").id == "clean-id"
+    assert app._resolve_profile("  WORK  ").id == "work-id"
+
+
+def test_resolve_profile_id_wins_over_name():
+    """An exact id match takes precedence over a name match."""
+    app = App(headless=True)
+    app._cfg = _cfg_with_profiles()
+    # "work-id" is an id; must resolve by id, not be treated as a name miss.
+    assert app._resolve_profile("work-id").name == "Work"
+
+
 def test_resolve_profile_blank_raises():
     """No default profile: a blank id is an error, not a fallback to 'first'."""
     app = App(headless=True)
