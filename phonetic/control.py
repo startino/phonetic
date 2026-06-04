@@ -80,13 +80,20 @@ class ControlChannel:
         import select
 
         buf = b""
-        while not self._stop and self._fd is not None:
+        while not self._stop:
+            # Snapshot the fd ONCE per iteration. stop() nulls self._fd on
+            # another thread, so reading it repeatedly here races: select/read
+            # could see a live fd and then os.read(None) raises TypeError. Bind
+            # it locally and bail if shutdown already closed it.
+            fd = self._fd
+            if fd is None:
+                break
             try:
                 # Block until readable (or 1s timeout to re-check _stop).
-                rlist, _, _ = select.select([self._fd], [], [], 1.0)
+                rlist, _, _ = select.select([fd], [], [], 1.0)
                 if not rlist:
                     continue
-                chunk = os.read(self._fd, 4096)
+                chunk = os.read(fd, 4096)
                 if not chunk:
                     continue
                 buf += chunk
