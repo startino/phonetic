@@ -3,8 +3,7 @@ import os
 import queue
 import sys
 import threading
-import tkinter as tk
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
@@ -17,10 +16,18 @@ from .hotkeys import HotkeyManager
 from .notifications import notify
 from .recorder import Recorder
 from .transcribe import transcribe
-# NOTE: do NOT import .tray at module top. pystray opens the X display at import
-# time and raises (not just ImportError) when there is no display — which would
-# crash --headless / systemd-service startup before main() even runs. The tray
-# is GUI-only; it is imported lazily in _start_services().
+# NOTE: do NOT import any UI module (tkinter, customtkinter, .tray, .ui.settings)
+# at module top. This module is the daemon TRUNK — `phonetic`'s core path imports
+# it with the entire UI surface absent (see tests/test_areliant.py, which
+# `None`-blocks tkinter/customtkinter/pystray/PIL/.tray/.ui to prove the core is
+# *areliant* on the UI). tkinter also crashes (not just ImportError) when pystray
+# opens the X display headlessly. Every GUI import below is function-local so the
+# import only happens on the GUI path, never on import or the daemon path.
+
+if TYPE_CHECKING:
+    # Type-only imports: evaluated by type checkers, never at runtime, so the
+    # daemon trunk stays UI-free while the annotations below still resolve.
+    from .tray import TrayManager
 
 
 class UnknownProfileError(Exception):
@@ -51,7 +58,7 @@ class App:
         self._rec: Optional[Recorder] = None
         self._processing = False
         self._processing_lock = threading.Lock()
-        self._tray: Optional[TrayManager] = None
+        self._tray: Optional["TrayManager"] = None
         self._hotkeys: Optional[HotkeyManager] = None
         self._control: Optional[ControlChannel] = None  # FIFO trigger channel
         self._root: Optional[object] = None  # tk.Tk when in GUI mode
@@ -70,6 +77,7 @@ class App:
     def _set_root_icon(self) -> None:
         """Set the root window icon so child windows inherit it."""
         try:
+            import tkinter as tk
             from .tray import _assets_dir
             icon_path = os.path.join(_assets_dir(), "icon.png")
             if os.path.exists(icon_path):
@@ -746,10 +754,24 @@ class App:
         if self._tray:
             self._tray.stop()
 
-    # --- Headless mode ---
+    # --- Headless / daemon mode ---
 
-    def _run_headless(self) -> None:
-        """Run in headless/console mode (original behavior for systemd/CLI)."""
+    def start(self) -> None:
+        """Construct and start the daemon — everything up to the message loop.
+
+        This is the daemon-init SEAM: it does exactly what the headless path does
+        BEFORE the ``while True`` message loop, then RETURNS. The trunk
+        (``_run_headless``) calls ``start()`` and then runs the loop;
+        ``tests/test_areliant.py`` calls ``start()`` under the UI ``None``-block to
+        prove the daemon constructs (``load_config`` → ``Recorder`` →
+        ``HotkeyManager``) with the entire UI surface absent. The boundary
+        deliberately INCLUDES recorder + hotkey-manager construction so a regressed
+        module-top GUI import anywhere in that path is caught by the test.
+
+        Idempotent enough for the test to call it directly: it builds the daemon
+        objects, starts the hotkey + control channels, and prints status. It does
+        NOT enter any loop and does NOT block.
+        """
         try:
             cfg = load_config(require_key=False)
         except RuntimeError as e:
@@ -771,7 +793,7 @@ class App:
         # Hotkey manager with no global hotkey — each profile owns its own.
         self._hotkeys = HotkeyManager("", on_toggle=lambda: None)
         self._hotkeys.start()
-        _log(f"run_headless: hotkey manager started, type={type(self._hotkeys).__name__}")
+        _log(f"start: hotkey manager started, type={type(self._hotkeys).__name__}")
 
         # Register each profile's own hotkey.
         self._register_profile_hotkeys()
@@ -796,6 +818,14 @@ class App:
         if not n:
             print("No profiles configured. Edit profiles.json (see "
                   "profiles.json.example) and restart.", file=sys.stderr)
+
+    def _run_headless(self) -> None:
+        """Run in headless/console mode (original behavior for systemd/CLI).
+
+        The daemon TRUNK: ``start()`` builds the daemon, then this runs the
+        synchronous message loop until Ctrl+C.
+        """
+        self.start()
 
         print("Press Ctrl+C to exit.")
         try:
