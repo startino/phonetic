@@ -220,22 +220,16 @@ def edit_profile(name: str, fields: dict) -> Profile:
     if idx is None:
         raise KeyError(name)
     target = profiles[idx]
-    new_name_ref = fields.get("name", target.name)
     for key, value in fields.items():
         setattr(target, key, value)
-    # Keep the id mirror in sync if the name changed (it is re-derived on load
-    # anyway, but stay consistent in-memory for the post-write match).
-    target.id = target.name
     healed = _persist_through_healer(profiles)
-    # Re-locate by the (possibly new) name; fall back to the old name. The healer
-    # may have suffixed it on a collision, so match leniently.
-    new_idx = _find_profile_index(healed, new_name_ref)
-    if new_idx is None:
-        new_idx = _find_profile_index(healed, name)
-    if new_idx is None:
-        # Should not happen, but never crash: return the original position.
-        new_idx = min(idx, len(healed) - 1) if healed else 0
-    stored = healed[new_idx]
+    # Locate the edited profile by INDEX, not name: the healer preserves list
+    # order and only renames on a collision, so the edited profile stays at
+    # ``idx``. Re-locating by name would be wrong on a rename-collision — the
+    # requested name can survive on a DIFFERENT profile (an earlier-positioned
+    # one keeps it; the edited one gets suffixed), so a name match would return
+    # the wrong profile. Index is the positional answer we already hold.
+    stored = healed[idx]
     log(f"config_ops: edit_profile stored as name={stored.name!r}")
     return stored
 

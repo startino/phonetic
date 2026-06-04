@@ -27,6 +27,22 @@ def test_edit_renames_and_sets_fields(isolated_config):
     assert [p.name for p in ops.list_profiles()] == ["Email"]
 
 
+def test_edit_returns_edited_profile_on_rename_collision(isolated_config):
+    """Renaming a profile onto an earlier-positioned name must return the profile
+    that was ACTUALLY edited (the one the healer suffixes), not the pre-existing
+    collider that keeps the requested name. profiles=[B, A]; rename A -> "B".
+    """
+    ops.add_profile("B", model="b-model")
+    ops.add_profile("A", model="a-model")
+    stored = ops.edit_profile("A", {"name": "B"})
+    # The healer keeps list order: index 0 ("B") keeps the name, the edited
+    # index 1 collides and becomes "B (2)". The return value must be THAT one.
+    assert stored.name == "B (2)"
+    assert stored.model == "a-model"  # carried over from the edited profile.
+    # Persisted order is unchanged; both names present, edited one suffixed.
+    assert [p.name for p in ops.list_profiles()] == ["B", "B (2)"]
+
+
 def test_edit_unknown_field_raises(isolated_config):
     ops.add_profile("Work")
     try:
