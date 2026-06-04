@@ -300,10 +300,11 @@ def set_toggle(name: str, value) -> dict:
     """Set one settings.json toggle and persist. Returns the new settings dict.
 
     ``name`` is one of ``notify`` / ``verbose`` / ``auto_start`` (bool) or
-    ``device`` (int index, or None to auto-detect). Reads the current toggles
-    (env overrides excluded from the written file — we persist the file's own
-    state plus this change), applies the change, writes settings.json only.
-    Unknown toggle names raise ``ValueError``.
+    ``device`` (int index, or None to auto-detect). Reads the merged current
+    toggles (the file's values with NOTIFY/VERBOSE/AUTO_START env overrides
+    applied, matching what the daemon loads), applies the change, writes
+    settings.json only — so a process env override present at write time is
+    persisted into the file. Unknown toggle names raise ``ValueError``.
     """
     if name not in _BOOL_TOGGLES and name != "device":
         raise ValueError(
