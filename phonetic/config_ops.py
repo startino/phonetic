@@ -33,19 +33,24 @@ profiles is a legal state and stays legal.
 """
 
 from pathlib import Path
+import os
 from typing import Optional
 
+# Import the config MODULE (not its functions by name) for everything that
+# resolves a path. The per-file path helpers all derive from `config._config_dir`,
+# which tests monkeypatch on the module object; a `from .config import _config_dir`
+# binding would freeze the ORIGINAL at import time, so config_ops would resolve a
+# different dir than the config.py readers — splitting writes across two dirs.
+# Going through the module keeps a single live source of truth for the dir.
+from . import config as _config
 from .config import (
+    Config,
     Profile,
-    _config_dir,
     _format_env,
     _format_profiles_json,
     _format_settings_json,
     _load_profiles,
     _load_settings,
-    _profiles_path,
-    _settings_path,
-    config_file_path,
 )
 from .log import log
 
@@ -57,22 +62,22 @@ from .log import log
 
 def secrets_path() -> Path:
     """Resolved .env path the daemon reads secrets from (override chain)."""
-    return config_file_path()
+    return _config.config_file_path()
 
 
 def settings_path() -> Path:
     """Platform settings.json path the daemon reads toggles from."""
-    return _settings_path()
+    return _config._settings_path()
 
 
 def profiles_path() -> Path:
     """Platform profiles.json path the daemon reads profiles from."""
-    return _profiles_path()
+    return _config._profiles_path()
 
 
 def config_dir() -> Path:
     """The platform config dir (settings.json + profiles.json live here)."""
-    return _config_dir()
+    return _config._config_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -87,9 +92,9 @@ def _write_profiles(profiles: list[Profile]) -> Path:
     but writes ONLY profiles.json so a profile mutation never touches .env /
     settings.json. Safe when the dir does not yet exist.
     """
-    cfg_dir = _config_dir()
+    cfg_dir = _config._config_dir()
     cfg_dir.mkdir(parents=True, exist_ok=True)
-    path = _profiles_path()
+    path = _config._profiles_path()
     path.write_text(_format_profiles_json(profiles), encoding="utf-8")
     return path
 
@@ -112,9 +117,9 @@ def _write_settings(settings: dict) -> Path:
     Mirrors ``save_config``'s settings write (same serializer, same path), writing
     ONLY settings.json. Safe when the dir does not yet exist.
     """
-    cfg_dir = _config_dir()
+    cfg_dir = _config._config_dir()
     cfg_dir.mkdir(parents=True, exist_ok=True)
-    path = _settings_path()
+    path = _config._settings_path()
     path.write_text(_format_settings_json(settings), encoding="utf-8")
     return path
 
@@ -128,6 +133,18 @@ def list_profiles() -> list[Profile]:
     """Return the configured profiles (healed). Empty list when none — never a
     synthesized default. Reads profiles.json directly; no audio, no UI."""
     return _load_profiles()
+
+
+def set_profiles(profiles: list[Profile]) -> list[Profile]:
+    """Replace the entire profile set and persist. Returns the healed result.
+
+    The bulk-write primitive the settings window needs (it edits a working list
+    of profiles and saves them all at once). Like every other mutation it routes
+    through the healer, so blank/duplicate names are collapsed and the persisted
+    list is authoritative. An empty list is legal (no default profile).
+    """
+    log(f"config_ops: set_profiles ({len(profiles)} profile(s))")
+    return _persist_through_healer(list(profiles))
 
 
 def add_profile(
@@ -255,11 +272,26 @@ def set_api_key(api_key: str) -> Path:
     gets that file written, not the platform one. Creates the parent dir as
     needed (e.g. first-run platform .env).
     """
-    path = config_file_path()
+    path = _config.config_file_path()
     log(f"config_ops: set_api_key -> {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_format_env(api_key.strip()), encoding="utf-8")
     return path
+
+
+def get_api_key() -> str:
+    """Read the OpenRouter API key from the resolved secrets file (override
+    chain), without polluting os.environ. Returns '' when unset. No audio, no UI.
+    """
+    path = _config.config_file_path()
+    if not path.is_file():
+        return ""
+    try:
+        from dotenv import dotenv_values
+        return (dotenv_values(path).get("OPENROUTER_API_KEY") or "").strip()
+    except Exception as exc:
+        log(f"config_ops: get_api_key read failed: {exc}")
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -296,3 +328,82 @@ def set_toggle(name: str, value) -> dict:
 def get_settings() -> dict:
     """Return the current toggles (notify/verbose/auto_start/device). No audio."""
     return _load_settings()
+
+
+# ---------------------------------------------------------------------------
+# Whole-config persistence + in-memory assembly (the settings-window surface)
+# ---------------------------------------------------------------------------
+
+
+def save_from_ui(
+    api_key: str,
+    notify: bool,
+    auto_start: bool,
+    profiles: list[Profile],
+    *,
+    sample_rate: int,
+    channels: int,
+    device: Optional[int],
+    verbose: bool,
+) -> Config:
+    """Persist everything the settings window edits, then return the assembled
+    in-memory Config for the app callback.
+
+    This is the SINGLE entry point the UI uses on save: it writes the secret, the
+    toggles, and the profiles each through the granular per-file writers (so the
+    secrets/settings/profiles path asymmetry is honored and a CWD .env is never
+    clobbered), then assembles a Config from the persisted state plus the audio
+    fields the window carries. The UI never assembles a Config or calls
+    save_config itself — all config logic lives here.
+
+    ``sample_rate`` / ``channels`` / ``device`` / ``verbose`` are passed through
+    from the window's existing config (they are auto-detected / not edited in the
+    window) so the returned Config matches what the daemon would load.
+    """
+    log("config_ops: save_from_ui persisting secret + toggles + profiles")
+    set_api_key(api_key)
+    # Persist toggles. device + verbose are carried through unchanged from the
+    # window's config; notify + auto_start are the window's checkboxes.
+    settings = _load_settings()
+    settings.update({
+        "notify": bool(notify),
+        "auto_start": bool(auto_start),
+        "verbose": bool(verbose),
+        "device": device,
+    })
+    _write_settings(settings)
+    healed = set_profiles(profiles)
+    return assemble_config(
+        sample_rate=sample_rate, channels=channels, device=device,
+        notify=bool(notify), auto_start=bool(auto_start), verbose=bool(verbose),
+        profiles=healed, api_key=api_key,
+    )
+
+
+def assemble_config(
+    *,
+    sample_rate: int,
+    channels: int,
+    device: Optional[int],
+    notify: bool,
+    auto_start: bool,
+    verbose: bool,
+    profiles: Optional[list[Profile]] = None,
+    api_key: Optional[str] = None,
+) -> Config:
+    """Build an in-memory Config DTO from given values (no audio detection).
+
+    Used to hand the app a fresh Config after a UI save without going through
+    load_config (which would re-detect audio). profiles/api_key default to the
+    persisted values when not supplied.
+    """
+    return Config(
+        openrouter_api_key=get_api_key() if api_key is None else api_key,
+        sample_rate=sample_rate,
+        channels=channels,
+        device=device,
+        notify=notify,
+        verbose=verbose,
+        auto_start=auto_start,
+        profiles=_load_profiles() if profiles is None else profiles,
+    )

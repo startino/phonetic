@@ -156,16 +156,38 @@ def test_microphone_status_not_applicable_off_macos(monkeypatch):
 
 def test_config_dispatch_imports_no_app_or_ui(isolated_config):
     """The whole point of the pre-App-import dispatch: a config verb must not pull
-    in phonetic.app, the tray, or any UI module."""
+    in phonetic.app, the tray, or any UI module.
+
+    We evict those modules so a fresh import by the verb would be detectable, then
+    RESTORE the exact original sys.modules state (and the parent package's
+    submodule attributes) in a finally -- popping phonetic.app without restoring
+    would corrupt the module cache for a sibling test whose class is bound to the
+    original module object.
+    """
     from phonetic.__main__ import _run_config_command
-    # Evict app/UI so we can detect a fresh import by the verb.
-    for name in ("phonetic.app", "phonetic.tray", "phonetic.ui",
-                 "phonetic.ui.settings"):
-        sys.modules.pop(name, None)
-    _run_config_command(_parse(["config", "add-profile", "X", "--hotkey",
-                                "<ctrl>+<alt>+x"]))
-    _run_config_command(_parse(["config", "list"]))
-    _run_config_command(_parse(["config", "path"]))
-    for name in ("phonetic.app", "phonetic.tray", "phonetic.ui",
-                 "phonetic.ui.settings"):
-        assert name not in sys.modules, f"config dispatch imported {name}"
+
+    watched = ("phonetic.app", "phonetic.tray", "phonetic.ui",
+               "phonetic.ui.settings")
+    saved = {n: (n in sys.modules, sys.modules.get(n)) for n in watched}
+    try:
+        for name in watched:
+            sys.modules.pop(name, None)
+        _run_config_command(_parse(["config", "add-profile", "X", "--hotkey",
+                                    "<ctrl>+<alt>+x"]))
+        _run_config_command(_parse(["config", "list"]))
+        _run_config_command(_parse(["config", "path"]))
+        for name in watched:
+            assert name not in sys.modules, f"config dispatch imported {name}"
+    finally:
+        for name, (was_present, obj) in saved.items():
+            if was_present:
+                sys.modules[name] = obj
+                parent_name, _, child = name.rpartition(".")
+                parent = sys.modules.get(parent_name)
+                if parent is not None:
+                    try:
+                        setattr(parent, child, obj)
+                    except Exception:
+                        pass
+            else:
+                sys.modules.pop(name, None)
