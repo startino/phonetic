@@ -36,13 +36,14 @@ from phonetic.config import Config, Profile  # noqa: E402
 
 
 def _cfg_with_profiles():
+    # The NAME is the identity; id mirrors it (id="" is overridden in __post_init__).
     clean = Profile(
-        id="clean-id", name="Clean", hotkey="<ctrl>+<alt>+r",
+        id="", name="Clean", hotkey="<ctrl>+<alt>+r",
         model="google/gemini-3-flash-preview", asr_model="", format_model="",
         system_prompt="CLEAN PROMPT",
     )
     work = Profile(
-        id="work-id", name="Work", hotkey="<ctrl>+<alt>+w",
+        id="", name="Work", hotkey="<ctrl>+<alt>+w",
         model="", asr_model="nvidia/parakeet-tdt-0.6b-v3",
         format_model="openai/gpt-4o", system_prompt="WORK PROMPT",
     )
@@ -53,30 +54,22 @@ def _cfg_with_profiles():
     )
 
 
-def test_resolve_profile_by_id():
-    app = App(headless=True)
-    app._cfg = _cfg_with_profiles()
-    assert app._resolve_profile("work-id").name == "Work"
-    assert app._resolve_profile("clean-id").name == "Clean"
-
-
 def test_resolve_profile_by_name():
-    """`phonetic --trigger <name>` (Wayland compositor binding) resolves by the
-    profile's name, case-insensitively, so DE shortcuts can use a readable label
-    instead of a UUID."""
+    """Profiles resolve by NAME (the identity), case-insensitive, with
+    surrounding whitespace ignored -- so `phonetic --trigger Work` works."""
     app = App(headless=True)
     app._cfg = _cfg_with_profiles()
-    assert app._resolve_profile("Work").id == "work-id"
-    assert app._resolve_profile("clean").id == "clean-id"
-    assert app._resolve_profile("  WORK  ").id == "work-id"
+    assert app._resolve_profile("Work").name == "Work"
+    assert app._resolve_profile("clean").name == "Clean"
+    assert app._resolve_profile("  WORK  ").name == "Work"
 
 
-def test_resolve_profile_id_wins_over_name():
-    """An exact id match takes precedence over a name match."""
+def test_profile_id_mirrors_name():
+    """There is no separate opaque id: id is an internal mirror of name."""
     app = App(headless=True)
     app._cfg = _cfg_with_profiles()
-    # "work-id" is an id; must resolve by id, not be treated as a name miss.
-    assert app._resolve_profile("work-id").name == "Work"
+    for p in app._cfg.profiles:
+        assert p.id == p.name
 
 
 def test_resolve_profile_blank_raises():
@@ -109,7 +102,7 @@ def test_transcribe_worker_uses_profile_models(monkeypatch):
 
     monkeypatch.setattr("phonetic.app.transcribe", fake_transcribe)
 
-    app._transcribe_worker(np.zeros(100, dtype=np.float32), 16000, "work-id")
+    app._transcribe_worker(np.zeros(100, dtype=np.float32), 16000, "Work")
     assert captured["asr_model"] == "nvidia/parakeet-tdt-0.6b-v3"
     assert captured["format_model"] == "openai/gpt-4o"
     assert captured["system_prompt"] == "WORK PROMPT"
@@ -130,7 +123,7 @@ def test_transcribe_worker_blank_model_uses_default(monkeypatch):
         return "ok"
 
     monkeypatch.setattr("phonetic.app.transcribe", fake_transcribe)
-    app._transcribe_worker(np.zeros(100, dtype=np.float32), 16000, "work-id")
+    app._transcribe_worker(np.zeros(100, dtype=np.float32), 16000, "Work")
     assert captured["model"] == DEFAULT_MODEL
     # format_model is explicit on the work profile, so it wins.
     assert captured["format_model"] == "openai/gpt-4o"
@@ -175,13 +168,13 @@ def test_profile_switch_while_recording(monkeypatch):
     monkeypatch.setattr(app, "_check_mic_permission", lambda: True)
     monkeypatch.setattr(app, "_notify", lambda *a, **k: None)
 
-    app._toggle_recording("clean-id")
+    app._toggle_recording("Clean")
     assert rec.is_recording is True
-    assert app._recording_profile_id == "clean-id"
+    assert app._recording_profile_id == "Clean"
 
-    app._toggle_recording("work-id")
+    app._toggle_recording("Work")
     assert rec.is_recording is True
-    assert app._recording_profile_id == "work-id"
+    assert app._recording_profile_id == "Work"
     assert rec._stops == 1
 
 
@@ -193,8 +186,8 @@ def test_same_profile_hotkey_while_recording_stops(monkeypatch):
     monkeypatch.setattr(app, "_check_mic_permission", lambda: True)
     monkeypatch.setattr(app, "_notify", lambda *a, **k: None)
 
-    app._toggle_recording("work-id")
+    app._toggle_recording("Work")
     assert rec.is_recording is True
-    app._toggle_recording("work-id")
+    app._toggle_recording("Work")
     assert rec.is_recording is False
     assert rec._stops == 1

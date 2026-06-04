@@ -22,36 +22,44 @@ def test_no_profiles_json_yields_empty_list(isolated_config, monkeypatch):
     assert cfg.profiles == []
 
 
-def test_duplicate_profile_ids_are_healed(isolated_config):
-    """Two profiles sharing an id (corrupt config) must not collapse onto the
-    first: _load_profiles reassigns fresh unique ids and persists the fix.
-
-    Regression: a duplicated profiles.json gave both 'r' and 'c' the same id,
-    so `--trigger c` (name->id) resolved back to profile r and every keybind
-    produced r's output.
+def test_duplicate_profile_names_are_healed(isolated_config):
+    """The name IS the identity, so names must be unique. Two profiles with the
+    same name get disambiguated on load (the duplicate gets ' (2)' appended) and
+    the fix is persisted. Resolution then targets distinct profiles.
     """
     from phonetic.config import _load_profiles
-    dup = "bb804489-6bd1-58d2-b80d-aaaeef817d07"
     _profiles_path().write_text(json.dumps({"profiles": [
-        {"id": dup, "name": "r", "hotkey": "<ctrl>+<alt>+r", "system_prompt": "VIC"},
-        {"id": dup, "name": "c", "hotkey": "<ctrl>+<alt>+c", "system_prompt": "PLAIN"},
+        {"name": "r", "hotkey": "<ctrl>+<alt>+r", "system_prompt": "FIRST"},
+        {"name": "r", "hotkey": "<ctrl>+<alt>+c", "system_prompt": "SECOND"},
     ]}), encoding="utf-8")
 
     profiles = _load_profiles()
-    ids = [p.id for p in profiles]
-    assert len(set(ids)) == 2, "ids must be unique after heal"
-    assert profiles[0].id == dup, "first profile keeps the original id"
-    assert profiles[1].id != dup, "the duplicate is reassigned"
-    # Healed result is persisted, so a second load is already unique (idempotent).
-    assert [p.id for p in _load_profiles()] == ids
+    names = [p.name for p in profiles]
+    assert names == ["r", "r (2)"], names
+    assert all(p.id == p.name for p in profiles), "id mirrors name"
+    # Persisted, so a second load is already unique (idempotent).
+    assert [p.name for p in _load_profiles()] == ["r", "r (2)"]
 
 
-def test_blank_profile_id_is_healed(isolated_config):
+def test_blank_profile_name_is_healed(isolated_config):
     from phonetic.config import _load_profiles
     _profiles_path().write_text(json.dumps({"profiles": [
-        {"id": "", "name": "x", "hotkey": "<ctrl>+<alt>+x"},
+        {"name": "", "hotkey": "<ctrl>+<alt>+x"},
     ]}), encoding="utf-8")
-    assert _load_profiles()[0].id, "blank id must be replaced with a real uuid"
+    assert _load_profiles()[0].name == "Profile 1"
+
+
+def test_legacy_id_field_is_dropped_on_load(isolated_config):
+    """An old profiles.json with an 'id' field is migrated: id is ignored and
+    the file is rewritten without it."""
+    from phonetic.config import _load_profiles
+    _profiles_path().write_text(json.dumps({"profiles": [
+        {"id": "old-uuid", "name": "Work", "hotkey": "<ctrl>+<alt>+w"},
+    ]}), encoding="utf-8")
+    profiles = _load_profiles()
+    assert profiles[0].id == "Work", "id is the name now, not the legacy uuid"
+    written = json.loads(_profiles_path().read_text(encoding="utf-8"))
+    assert "id" not in written["profiles"][0], "legacy id field stripped on load"
 
 
 def test_no_default_profile_id_symbol():
@@ -74,8 +82,9 @@ def test_save_writes_profiles_json(isolated_config, monkeypatch):
     )
     save_config(cfg)
     data = json.loads(_profiles_path().read_text(encoding="utf-8"))
-    assert [p["id"] for p in data["profiles"]] == ["a", "b"]
-    b = next(p for p in data["profiles"] if p["id"] == "b")
+    assert [p["name"] for p in data["profiles"]] == ["A", "B"]
+    assert all("id" not in p for p in data["profiles"]), "id is not persisted"
+    b = next(p for p in data["profiles"] if p["name"] == "B")
     assert b["asr_model"] == "nvidia/parakeet-tdt-0.6b-v3"
     assert b["format_model"] == "openai/gpt-4o"
 
@@ -91,7 +100,7 @@ def test_profiles_round_trip(isolated_config, monkeypatch):
     )
     save_config(cfg)
     reloaded = load_config(require_key=True)
-    assert [p.id for p in reloaded.profiles] == ["p1", "p2"]
+    assert [p.id for p in reloaded.profiles] == ["One", "Two"]  # id mirrors name
     assert reloaded.profiles[1].name == "Two"
     assert reloaded.profiles[1].model == "m2"
 

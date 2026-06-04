@@ -15,11 +15,18 @@ from .constants import DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
 class Profile:
     """A named keybind profile: its own hotkey, models, and system prompt.
 
-    A profile is the ONLY thing that can record. There is no default profile —
-    recording is always triggered with an explicit profile id, either from this
-    profile's own ``hotkey`` or by selecting it from the tray. ``model`` is the
+    The profile's NAME is its identity. A profile is the ONLY thing that can
+    record. There is no default profile — recording is always triggered with an
+    explicit profile, either from this profile's own ``hotkey``, by selecting it
+    from the tray, or via ``phonetic --trigger <name>``. ``model`` is the
     single-call transcription model (used when ``asr_model`` is blank) and the
     fallback formatting model; blank means fall back to the built-in default.
+
+    There is no separate opaque id. ``id`` is kept only as an internal
+    read-mirror of ``name`` (so the many ``p.id`` call sites keep working) — it
+    is set from ``name`` in ``__post_init__``, is never persisted, and can never
+    drift from or collide independently of the name. Name uniqueness is enforced
+    at load (see ``_load_profiles``).
     """
 
     id: str
@@ -30,10 +37,15 @@ class Profile:
     format_model: str = ""
     system_prompt: str = ""
 
+    def __post_init__(self) -> None:
+        # name is the single source of truth for identity; id mirrors it.
+        self.id = self.name
+
 
 def _profile_to_dict(p: Profile) -> dict:
+    # No "id": the name IS the identity. (id is an internal mirror of name and
+    # is intentionally not persisted.)
     return {
-        "id": p.id,
         "name": p.name,
         "hotkey": p.hotkey,
         "model": p.model,
@@ -44,8 +56,9 @@ def _profile_to_dict(p: Profile) -> dict:
 
 
 def _profile_from_dict(d: dict) -> Profile:
+    # Any legacy "id" key is ignored — __post_init__ derives id from name.
     return Profile(
-        id=str(d.get("id") or uuid.uuid4()),
+        id="",
         name=str(d.get("name", "")),
         hotkey=str(d.get("hotkey", "")),
         model=str(d.get("model", "")),
@@ -232,34 +245,45 @@ def _load_profiles() -> list[Profile]:
     if not path.is_file():
         return []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        profiles = [_profile_from_dict(d) for d in data.get("profiles", [])]
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw_profiles = raw.get("profiles", [])
+        profiles = [_profile_from_dict(d) for d in raw_profiles]
     except Exception as e:
         print(f"[config] Could not read profiles.json: {e}", file=sys.stderr)
         return []
 
-    # Enforce id uniqueness. Every trigger path (a profile's own hotkey, the
-    # tray, and --trigger after name->id normalization) resolves a profile by
-    # id, returning the FIRST match. So a blank or DUPLICATED id silently
-    # collapses every colliding profile onto the first one — e.g. two profiles
-    # sharing an id make `--trigger c` record with profile r's model/prompt.
-    # Heal corrupt state by reassigning fresh ids, then persist so the fix is
-    # stable across restarts (and bindings-by-id stop aliasing).
+    # The profile NAME is its identity (used by hotkeys, the tray, and
+    # `phonetic --trigger <name>`), so names must be unique and non-blank — an
+    # ambiguous name would make a trigger record with the wrong profile. Heal
+    # corrupt config in place: a blank name becomes "Profile N"; a duplicate
+    # gets " (2)", " (3)", ... appended. Keep id mirroring name throughout.
     seen: set[str] = set()
     healed = False
-    for p in profiles:
-        if not p.id or p.id in seen:
-            old = p.id
-            p.id = str(uuid.uuid4())
+    for i, p in enumerate(profiles):
+        name = p.name.strip()
+        if not name:
+            name = f"Profile {i + 1}"
             healed = True
+        if name.lower() in seen:
+            base, n = name, 2
+            while f"{base} ({n})".lower() in seen:
+                n += 1
+            name = f"{base} ({n})"
+            healed = True
+        if name != p.name:
             print(
-                f"[config] profiles.json: profile {p.name!r} had a "
-                f"{'blank' if not old else 'duplicate'} id {old!r}; "
-                f"reassigned {p.id!r}. Trigger profiles by name to be safe.",
+                f"[config] profiles.json: profile {p.name!r} renamed to "
+                f"{name!r} (names are the identity and must be unique).",
                 file=sys.stderr,
             )
-        seen.add(p.id)
-    if healed:
+            p.name = name
+            p.id = name  # keep the mirror in sync after a rename
+        seen.add(name.lower())
+
+    # Persist when we healed names OR when the on-disk file still carries the
+    # legacy "id" field (one-time migration: rewrite without it).
+    had_legacy_id = any("id" in d for d in raw_profiles if isinstance(d, dict))
+    if healed or had_legacy_id:
         try:
             path.write_text(_format_profiles_json(profiles), encoding="utf-8")
         except Exception as e:
@@ -491,14 +515,18 @@ _PROFILES_HELP_COMMENT = (
 )
 
 _PROFILES_HELP_FIELDS = {
-    "name": "Label shown in the Settings window and the tray. Free text.",
+    "name": (
+        "The profile's IDENTITY and its label in Settings/tray. Must be unique "
+        "(duplicates are auto-suffixed on load). This is what you pass to "
+        "'phonetic --trigger <name>'."
+    ),
     "hotkey": (
         "Key combo that triggers this profile, in pynput format, e.g. "
         "'<ctrl>+<alt>+r' (Linux/Windows) or '<cmd>+<shift>+r' (macOS). "
         "Each profile's hotkey records and transcribes with THIS profile's "
         "settings. Hotkeys must be unique across profiles. On Wayland, where "
         "global hotkeys can't be grabbed, bind a DE shortcut to "
-        "'phonetic --trigger <id>' instead (see the Settings window)."
+        "'phonetic --trigger <name>' instead (see the Settings window)."
     ),
     "model": (
         "The single-call transcription model (used when asr_model is blank), "
@@ -601,7 +629,7 @@ def _example_profiles() -> list[Profile]:
     """A spread of illustrative profiles showing what's possible."""
     return [
         Profile(
-            id="example-clean",
+            id="",  # name is the identity; id is derived
             name="Clean dictation",
             hotkey="<ctrl>+<alt>+r",
             model=DEFAULT_MODEL,
@@ -610,7 +638,7 @@ def _example_profiles() -> list[Profile]:
             system_prompt="",  # empty -> built-in default prompt
         ),
         Profile(
-            id="example-verbatim",
+            id="",
             name="Verbatim (no cleanup)",
             hotkey="<ctrl>+<alt>+v",
             model=DEFAULT_MODEL,
@@ -622,7 +650,7 @@ def _example_profiles() -> list[Profile]:
             ),
         ),
         Profile(
-            id="example-bullets",
+            id="",
             name="Bullet summary (two-stage)",
             hotkey="<ctrl>+<alt>+b",
             model="",
@@ -634,7 +662,7 @@ def _example_profiles() -> list[Profile]:
             ),
         ),
         Profile(
-            id="example-code",
+            id="",
             name="Code dictation (two-stage)",
             hotkey="<ctrl>+<alt>+c",
             model="",

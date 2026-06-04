@@ -156,5 +156,5 @@ def test_migration_does_not_clobber_existing_profiles(isolated_config, monkeypat
     }), encoding="utf-8")
 
     cfg = load_config(require_key=True)
-    assert [p.id for p in cfg.profiles] == ["keep"]
+    assert [p.id for p in cfg.profiles] == ["Keep"]  # id mirrors name
     assert cfg.profiles[0].model == "keep/model"

@@ -48,13 +48,13 @@ Each profile has six fields:
 | Field | Required | What it does |
 | --- | --- | --- |
 | `name` | yes | Label shown in the Settings window **and the tray menu**. Free text. |
-| `hotkey` | yes | The key combo that triggers this profile, in **pynput format** (see below). Must be unique across profiles. On Wayland, bind a desktop shortcut to `phonetic --trigger <id>` instead (see [Wayland](#wayland)). |
+| `hotkey` | yes | The key combo that triggers this profile, in **pynput format** (see below). Must be unique across profiles. On Wayland, bind a desktop shortcut to `phonetic --trigger <name>` instead (see [Wayland](#wayland)). |
 | `model` | no | This profile's transcription model: the single-call model (when `asr_model` is empty) and the fallback formatting model. Empty → built-in default (`mistralai/voxtral-small-24b-2507`). |
 | `asr_model` | no | When set, transcription becomes **two-stage**: this model does speech-to-text only (e.g. `nvidia/parakeet-tdt-0.6b-v3`), then `format_model` rewrites it. **Leave empty** for the single-model path. |
 | `format_model` | no | The model that formats/cleans the two-stage transcript. Empty → falls back to this profile's `model`. Only used when `asr_model` is set. |
 | `system_prompt` | no | The instruction that shapes the output (verbatim, summarised, a different language…). Empty → uses the built-in default prompt. |
 
-> **There is no default profile, and no global model or hotkey.** Every profile carries its own `model` and `hotkey`. Recording is *only ever* started by a profile's own hotkey, by picking the profile from the tray, or via `phonetic --trigger <id>`. A trigger that names a profile which no longer exists fails loudly (a notification, no recording) rather than recording with the wrong one.
+> **There is no default profile, and no global model or hotkey.** Every profile carries its own `model` and `hotkey`. Recording is *only ever* started by a profile's own hotkey, by picking the profile from the tray, or via `phonetic --trigger <name>`. A trigger that names a profile which no longer exists fails loudly (a notification, no recording) rather than recording with the wrong one.
 
 ### Where the file lives
 
@@ -85,7 +85,6 @@ Three profiles: clean dictation, a verbatim hotkey, and a two-stage "bullet poin
 {
   "profiles": [
     {
-      "id": "clean",
       "name": "Clean dictation",
       "hotkey": "<ctrl>+<alt>+r",
       "model": "mistralai/voxtral-small-24b-2507",
@@ -94,7 +93,6 @@ Three profiles: clean dictation, a verbatim hotkey, and a two-stage "bullet poin
       "system_prompt": ""
     },
     {
-      "id": "verbatim",
       "name": "Verbatim",
       "hotkey": "<ctrl>+<alt>+v",
       "model": "mistralai/voxtral-small-24b-2507",
@@ -103,7 +101,6 @@ Three profiles: clean dictation, a verbatim hotkey, and a two-stage "bullet poin
       "system_prompt": "Transcribe the audio exactly as spoken, word for word. Do not remove filler words, do not fix grammar, do not reword. Only add basic punctuation."
     },
     {
-      "id": "bullets",
       "name": "Bullet points",
       "hotkey": "<ctrl>+<alt>+b",
       "model": "",
@@ -116,7 +113,7 @@ Three profiles: clean dictation, a verbatim hotkey, and a two-stage "bullet poin
 ```
 
 Notes:
-- **`id`** must be unique and stable — any string works (a short slug like `"verbatim"` is fine). Don't reuse an `id` between profiles. It's also the id you pass to `phonetic --trigger <id>` on Wayland.
+- **`name` is the identity.** It must be unique (duplicates are auto-suffixed `(2)`, `(3)` on load; a blank name becomes `Profile N`). It's the label in the tray/Settings and the value you pass to `phonetic --trigger <name>` on Wayland. There is no separate `id` field — the name is the only key.
 - **No profile is privileged.** Order is just display order in the tray; there is no "primary" or "default" profile.
 
 ### Hotkey format
@@ -134,7 +131,7 @@ Common modifiers: `<ctrl>`, `<alt>`, `<shift>`, `<cmd>` (macOS ⌘ / Windows key
 - **Single-stage (default):** leave `asr_model` empty and set `model` to a multimodal model that accepts audio — e.g. `mistralai/voxtral-small-24b-2507` (the default; chosen because OpenRouter geo-blocks OpenAI/Anthropic/Google audio for some billing regions).
 - **Two-stage:** set `asr_model` to a dedicated speech-to-text model (e.g. `nvidia/parakeet-tdt-0.6b-v3`, served at OpenRouter's `/audio/transcriptions` endpoint) and `format_model` to any text model (e.g. `openai/gpt-4o-mini`). This is cheaper and often more accurate for long dictation, at the cost of one extra call.
 
-> **Wayland:** global hotkeys can't be grabbed, but every profile still works — bind a desktop shortcut to `phonetic --trigger <id>` per profile. Full per-profile parity, no default. See the [Wayland](#wayland) section below.
+> **Wayland:** global hotkeys can't be grabbed, but every profile still works — bind a desktop shortcut to `phonetic --trigger <name>` per profile. Full per-profile parity, no default. See the [Wayland](#wayland) section below.
 
 ## Run from source
 
@@ -161,7 +158,7 @@ In headless mode, configuration uses the same three files as the GUI:
 - **`settings.json`** holds toggles: `notify`, `verbose`, `auto_start`, `device`.
 - **`profiles.json`** holds your profiles — each with its own `model`, `asr_model`, `format_model`, `system_prompt`, and `hotkey`. There is no global `MODEL` or `HOTKEY` env var; transcription settings live per-profile.
 
-Copy the regenerated `.env.example` / `settings.json.example` / `profiles.json.example` siblings as starting points. On a server where global hotkeys aren't available, trigger a profile with `phonetic --trigger <id>` (e.g. from a keybind daemon or a script).
+Copy the regenerated `.env.example` / `settings.json.example` / `profiles.json.example` siblings as starting points. On a server where global hotkeys aren't available, trigger a profile with `phonetic --trigger <name>` (e.g. from a keybind daemon or a script).
 
 > Toggles can still be overridden by environment variables for quick experiments: `NOTIFY`, `VERBOSE`, `AUTO_START`. Secrets and per-profile model settings are file-only.
 
@@ -186,7 +183,7 @@ Global key grabs are blocked on Wayland — **no application can grab global hot
 phonetic --trigger <profile>          # <profile> = the profile NAME or its id
 ```
 
-`<profile>` can be the profile's **name** (readable, e.g. `phonetic --trigger Work`) or its `id`. To see exactly what to bind, run:
+`<profile>` is the profile's **name** (its identity, e.g. `phonetic --trigger Work`; quote names with spaces). To see exactly what to bind, run:
 
 ```bash
 phonetic --list-profiles

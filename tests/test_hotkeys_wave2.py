@@ -47,7 +47,7 @@ def test_pynput_update_hotkeys_single_listener(monkeypatch):
     # Each mapping entry dispatches the correct profile id.
     listener.mapping["<ctrl>+<alt>+a"]()
     listener.mapping["<ctrl>+<alt>+b"]()
-    assert fired == ["a", "b"]
+    assert fired == ["A", "B"]  # dispatch carries the name (=id)
 
 
 def test_pynput_update_hotkeys_replaces_old_listener(monkeypatch):

@@ -190,7 +190,10 @@ class SettingsWindow(ctk.CTkToplevel):
             return
 
         for p in profiles:
-            cmd = f"phonetic --trigger {p.id}"
+            # Trigger by name (the identity). Quote names containing spaces so
+            # the command is copy-pasteable into a compositor/DE binding.
+            ref = p.name if p.name and " " not in p.name else f'"{p.name}"'
+            cmd = f"phonetic --trigger {ref}"
             row = ctk.CTkFrame(frame, fg_color="transparent")
             row.pack(fill="x", padx=12, pady=(0, 4))
             ctk.CTkLabel(
