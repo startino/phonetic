@@ -27,3 +27,16 @@ reference them.
 - **Config split (0.6.6+)**: three files in the config dir — `.env` (secret only),
   `settings.json` (toggles: notify/verbose/auto_start/device), `profiles.json` (profiles).
   A pre-0.6.6 `config.env` is auto-migrated on first launch.
+- **areliant** (1.0.0+): a property of the Phonetic core — it imports, starts its daemon
+  (via the extracted `start()` daemon-init path), and performs every configuration
+  operation with all UI modules and GUI dependencies ABSENT from `sys.modules`
+  (`None`-blocked, not merely uninstalled — blocking, not absence, is what the test
+  asserts). The dependency arrow is strictly one-way: **UI → core, never core → UI**.
+  Enforced by `tests/test_areliant.py`, which `None`-blocks the UI surface
+  (`tkinter`/`tkinter.messagebox`, `customtkinter`, `pystray`, `PIL.*`,
+  `phonetic.ui[.settings]`, `phonetic.tray`) while leaving the core deps
+  (`sounddevice`, `soundfile`, `httpx`, `pynput`) resolvable, then drives import +
+  config round-trip + real daemon-init. If the core ever imports the UI, it fails at
+  import. The word is deliberate — the core is *areliant* (not *reliant*) on the UI
+  (coined in ADR 0002). _Avoid_: "decoupled", "headless-capable" — those describe a
+  runtime mode; *areliant* is an enforced structural invariant.
