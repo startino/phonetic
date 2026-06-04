@@ -7,11 +7,8 @@ import customtkinter as ctk
 
 import uuid
 
-from ..config import (
-    Config,
-    Profile,
-    save_config,
-)
+from ..config import Config, Profile
+from .. import config_ops
 from ..constants import DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
 
 
@@ -592,18 +589,21 @@ class SettingsWindow(ctk.CTkToplevel):
                         )
                         return
 
-        new_cfg = Config(
-            openrouter_api_key=api_key,
+        # Persist through the single writer (config_ops). The window assembles no
+        # Config and calls no save_config — all config logic (the secret/toggle/
+        # profile writes, the path asymmetry, the name-is-identity healing) lives
+        # in config_ops. The returned Config is the in-memory DTO for the app
+        # callback (audio fields carried through from the window's config).
+        new_cfg = config_ops.save_from_ui(
+            api_key=api_key,
+            notify=self._notify_var.get(),
+            auto_start=self._autostart_var.get(),
+            profiles=profiles,
             sample_rate=self._config.sample_rate if self._config else 48000,
             channels=self._config.channels if self._config else 1,
             device=self._config.device if self._config else None,
-            notify=self._notify_var.get(),
             verbose=self._config.verbose if self._config else False,
-            auto_start=self._autostart_var.get(),
-            profiles=profiles,
         )
-
-        save_config(new_cfg)
 
         if self._on_save:
             self._on_save(new_cfg)
