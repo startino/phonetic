@@ -292,29 +292,29 @@ def get_api_key() -> str:
 # Toggles (settings.json)
 # ---------------------------------------------------------------------------
 
-# The toggle fields settings.json carries. ``device`` is an int index or None.
+# The bool toggle fields ``set_toggle`` writes. ``device`` is NOT here: it is an
+# int index (or None) set via the config file, the tray, and auto-detect — not
+# through this bool-only primitive (a CLI device-selection with enumeration is a
+# separate future feature). The UI persists ``device`` via its own settings write
+# in ``save_from_ui``, never through ``set_toggle``.
 _BOOL_TOGGLES = frozenset({"notify", "verbose", "auto_start"})
 
 
 def set_toggle(name: str, value) -> dict:
-    """Set one settings.json toggle and persist. Returns the new settings dict.
+    """Set one bool settings.json toggle and persist. Returns the new settings dict.
 
-    ``name`` is one of ``notify`` / ``verbose`` / ``auto_start`` (bool) or
-    ``device`` (int index, or None to auto-detect). Reads the merged current
-    toggles (the file's values with NOTIFY/VERBOSE/AUTO_START env overrides
-    applied, matching what the daemon loads), applies the change, writes
+    ``name`` is one of ``notify`` / ``verbose`` / ``auto_start`` (bool). Reads the
+    merged current toggles (the file's values with NOTIFY/VERBOSE/AUTO_START env
+    overrides applied, matching what the daemon loads), applies the change, writes
     settings.json only — so a process env override present at write time is
     persisted into the file. Unknown toggle names raise ``ValueError``.
     """
-    if name not in _BOOL_TOGGLES and name != "device":
+    if name not in _BOOL_TOGGLES:
         raise ValueError(
-            f"unknown toggle {name!r}; valid: notify, verbose, auto_start, device"
+            f"unknown toggle {name!r}; valid: notify, verbose, auto_start"
         )
     settings = _load_settings()
-    if name in _BOOL_TOGGLES:
-        settings[name] = bool(value)
-    else:  # device
-        settings["device"] = int(value) if value is not None else None
+    settings[name] = bool(value)
     log(f"config_ops: set_toggle {name}={settings[name]!r}")
     _write_settings(settings)
     return settings
