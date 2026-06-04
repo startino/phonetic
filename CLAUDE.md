@@ -1,19 +1,24 @@
 # Phonetic Project
 
 ## Architecture
+- **areliant CLI core (v1.0.0+)**: the daemon/CLI is the self-sufficient trunk; the UI is an optional thin client. The core never imports UI code — UI → core only, never core → UI. Enforced by `tests/test_areliant.py` (`None`-blocks the UI surface; see `CONTEXT.md`'s *areliant* term). The daemon-init seam is `App.start()` (everything `_run_headless` does up to but not including the `while True` loop).
 - **Package structure**: `phonetic/` package with modules split from old monolithic `main.py`
 - **Entry point**: `phonetic.__main__:main` (defined in `pyproject.toml [project.scripts]`)
 - **Backward compat**: `main.py` is a shim that imports from `phonetic.__main__`
-- **Modes**: GUI (tray icon via pystray + customtkinter settings) and headless (`--headless` or no display)
+- **CLI**: argparse subparsers — `config {list,add-profile,edit,remove,path,set-key,set}`, `grant-mic`, `doctor`; plus back-compat flags `--trigger`/`--list-profiles` (alias of `config list`)/`--headless`/`--version`. Every thin verb dispatches and `sys.exit()`s BEFORE `from .app import App`, so the CLI surface stays UI-free and audio-free.
+- **Modes**: default `phonetic` on a desktop = daemon + tray + settings-from-tray (UX held constant); `--headless` or no display = daemon-only. tkinter/customtkinter/pystray/PIL are imported function-locally on the GUI path, never at module top.
 - **Threading**: Main thread = customtkinter mainloop, tray = daemon thread, hotkeys = Carbon event handler (macOS) / pynput daemon thread (Linux/Windows), transcription = worker threads
 - **Message queue**: `App._msg_queue` polled via `root.after(100, ...)` in GUI mode
 
 ## Key Modules
 - `config.py` — Platform-aware config (macOS: ~/Library/Application Support/Phonetic, Windows: %APPDATA%\Phonetic, Linux: ~/.config/phonetic)
-- `app.py` — Orchestrator, message dispatch, toggle_recording logic
+- `config_ops.py` — the SINGLE WRITER for config: list/add/edit/remove profiles, set-key, toggles. Built on `config.py` primitives, routes every profile mutation through the name-is-identity healer. UI-free, audio-free. The CLI and the settings UI are both thin clients on it (no `save_config(`/`Config(` persistence-assembly lives under `ui/`).
+- `app.py` — Orchestrator, message dispatch, toggle_recording logic; `start()` is the daemon-init seam shared by the trunk and the areliant test
+- `mic_permission.py` — UI-free macOS TCC mic grant (`grant_microphone`); print/log reporting, never tkinter; `phonetic grant-mic` invokes it
+- `doctor.py` — read-only health probe (`run_doctor`); honest daemon liveness via the control-FIFO `O_WRONLY|O_NONBLOCK` ENXIO probe + Linux pidfile `kill(0)`, never file presence
 - `tray.py` — pystray TrayManager, programmatic icon generation
 - `hotkeys.py` — Carbon RegisterEventHotKey on macOS, pynput on Linux/Windows, SIGUSR1 fallback on Linux
-- `ui/settings.py` — CTkToplevel settings window, doubles as first-run wizard
+- `ui/settings.py` — CTkToplevel settings window (a pure config-ops client), doubles as first-run wizard
 - `autostart.py` — LaunchAgent (macOS), Registry (Windows), XDG .desktop (Linux)
 
 ## Build System
@@ -113,6 +118,7 @@ open ~/Applications/Phonetic.app
 
 ## macOS Known Issues
 - **Bundle ID**: `no.starti.phonetic`
+- **Headless mic grant (v1.0.0+)**: the macOS TCC mic permission is now reachable WITHOUT the UI via `phonetic grant-mic` (core fn `mic_permission.grant_microphone` — AVFoundation request + AppKit foreground moment + objc block-sig registration, print/log reporting, never tkinter, never inits Tk). The GUI path still grants on first run; `grant-mic` covers the headless `.app`/LaunchAgent case. TCC still binds to the bundle identity and needs a foreground moment, so the `.app` bundle + AppKit shim stay.
 - **Sequoia com.apple.provenance**: Immutable xattr on /Applications apps, blocks unsigned dylibs. Install to ~/Applications instead.
 - **AppTranslocation**: DMG-launched apps get translocated to temp path, also blocked by dyld. Must copy out first.
 - **LSUIElement + permission dialogs**: Background/agent apps can't show system permission dialogs. Must set NSApplicationActivationPolicyRegular + activateIgnoringOtherApps_ before requesting.
@@ -126,9 +132,12 @@ open ~/Applications/Phonetic.app
 - **Carbon RegisterEventHotKey needs NO permissions**: Replaced pynput with quickmachotkey (Carbon HIToolbox) on macOS in v0.5.55. Deprecated API but only permission-free approach. Confirmed working on Tahoe (26.3) in v0.5.57.
 
 ## Dev Commands
-- `uv run phonetic` — GUI mode
+- `uv run phonetic` — default mode (daemon + tray on a desktop; daemon-only headless)
 - `uv run phonetic --headless` — headless/systemd mode
 - `uv run phonetic --version` — version check
+- `uv run phonetic config {list,add-profile,edit,remove,path,set-key,set}` — UI-free config
+- `uv run phonetic grant-mic` — macOS headless mic permission (no-op elsewhere)
+- `uv run phonetic doctor` — read-only health report (mic/hotkeys/clipboard/daemon)
 - `./service.sh` — systemd service management (uses `phonetic --headless`)
 
 <!-- station-agent-docs-start -->

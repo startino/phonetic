@@ -4,6 +4,8 @@ Hotkey-based speech-to-text using a multimodal LLM via OpenRouter. Press a keybi
 
 By default, audio is sent to a single multimodal model (`mistralai/voxtral-small-24b-2507`) that handles both transcription and formatting (punctuation, paragraphs, filler removal) in one step. You can optionally split this into a **two-stage pipeline** — a cheap dedicated ASR model for transcription, then a separate formatting model — and configure **per-keybind profiles** so different hotkeys use different models and prompts (see below).
 
+> **CLI-first (v1.0.0).** Phonetic's core is a self-sufficient daemon: every profile, model, hotkey, and toggle is configurable from the command line (`phonetic config …`), and the daemon runs with no display and no UI installed. The settings window is an optional thin client on top of the same `phonetic config` primitives. The dependency arrow is one-way — UI → core, never core → UI (enforced by a test; see `CONTEXT.md`'s *areliant* term).
+
 ## Install
 
 Download the latest release from [GitHub Releases](https://github.com/startino/phonetic/releases):
@@ -16,15 +18,23 @@ Download the latest release from [GitHub Releases](https://github.com/startino/p
 
 ### macOS
 
-Open the DMG, drag Phonetic to your Applications folder (or `~/Applications`), and launch it. On first run, a setup wizard will ask for your OpenRouter API key and let you configure your hotkey.
+Open the DMG, drag Phonetic to `~/Applications` (Sequoia blocks unsigned dylibs under `/Applications`), and launch it. The menu-bar app starts the daemon and shows a setup wizard on first run.
+
+Running it **headless** (no menu-bar app, e.g. from a LaunchAgent or a terminal)? Grant the microphone permission once with:
+
+```bash
+phonetic grant-mic     # triggers the macOS mic dialog; prints status, opens no window
+```
+
+macOS binds microphone access (TCC) to the app's bundle identity and needs a foreground moment to show the dialog — `grant-mic` handles both without opening any UI. Then configure profiles with `phonetic config …` (below) and run `phonetic --headless`.
 
 ### Windows
 
-Extract the zip and run `phonetic.exe`. The setup wizard handles configuration on first launch.
+Extract the zip and run `phonetic.exe` — it starts the background process and shows the setup wizard on first launch. Hotkeys use pynput; you can also bind shortcuts to `phonetic --trigger <name>` via AutoHotkey or the Task Scheduler.
 
 ### Linux
 
-Install the `.deb` package or run from source (see below).
+Run the daemon (`phonetic --headless`, or `./service.sh` for a systemd user service) and bind your compositor/DE keys to `phonetic --trigger <name>` (Wayland) — or let X11 grab the per-profile hotkeys directly. Configure everything with `phonetic config …` (below); the UI is optional. Install the `.deb` package or run from source (see below).
 
 ## Setup
 
@@ -72,10 +82,42 @@ Config is split across three files in the config directory, each with an embedde
 
 Upgrading from an older single-file `config.env`? Phonetic migrates it automatically on first launch: your key moves to `.env`, your toggles to `settings.json`, and your old `MODEL`/`HOTKEY`/prompt become your first profile in `profiles.json`.
 
-### Two ways to configure
+### Three ways to configure
 
-1. **Settings window** (easiest) — open it from the tray / menu-bar icon → **Settings**. Add a profile, name it, record its hotkey, set its model(s) and prompt, and save.
-2. **Edit `profiles.json` directly** — change the file with any text editor (start from `profiles.json.example` in the same folder), then **restart Phonetic** to apply. Add as many entries to the `profiles` array as you like.
+1. **The `phonetic config` CLI** (no UI needed) — add, edit, remove, and list profiles, set your key, and flip toggles entirely from the command line. See [Configure from the command line](#configure-from-the-command-line) below.
+2. **Settings window** — open it from the tray / menu-bar icon → **Settings**. Add a profile, name it, record its hotkey, set its model(s) and prompt, and save. (It drives the same `phonetic config` primitives under the hood.)
+3. **Edit `profiles.json` directly** — change the file with any text editor (start from `profiles.json.example` in the same folder), then **restart Phonetic** to apply.
+
+### Configure from the command line
+
+Every configuration operation has a CLI verb, so Phonetic is fully configurable without ever opening (or installing) the UI:
+
+```bash
+phonetic config list                       # list profiles (name, hotkey, trigger command)
+phonetic config add-profile Work \
+    --hotkey '<ctrl>+<alt>+w' --model mistralai/voxtral-small-24b-2507
+phonetic config add-profile Bullets \
+    --asr-model nvidia/parakeet-tdt-0.6b-v3 --format-model openai/gpt-4o-mini \
+    --system-prompt "Summarise into tight bullet points."
+phonetic config edit Work --name Email --model openai/gpt-4o-mini   # rename + change model
+phonetic config remove Email
+phonetic config set-key sk-or-...                                   # write the OpenRouter key
+phonetic config set notify off                                     # toggle notify/verbose/auto_start
+phonetic config path                                               # print the resolved config file paths
+```
+
+`config add-profile` / `edit` accept `--hotkey`, `--model`, `--asr-model`, `--format-model`, `--system-prompt` (and `--name` to rename on `edit`). The name is the identity; duplicates are auto-suffixed. Removing every profile is a legal state — there is no default profile.
+
+Two more verbs:
+
+```bash
+phonetic grant-mic     # macOS: request microphone permission headlessly (no-op elsewhere)
+phonetic doctor        # read-only health report: mic / hotkey backend / clipboard / daemon status
+```
+
+`phonetic doctor` is honest about the daemon: it probes the live control-FIFO reader (not mere file presence), so it reports *running* only when a daemon is actually listening. Restart Phonetic after CLI changes for them to take effect (or they apply on next launch).
+
+`phonetic config path` prints **both** resolved targets, because the files resolve differently: the secret `.env` honors the override chain (`PHONETIC_CONFIG` → a `.env` in the current directory → the platform dir), while `settings.json` and `profiles.json` always live in the platform config dir. This mirrors exactly what the daemon reads.
 
 ### A complete example
 
@@ -158,7 +200,7 @@ In headless mode, configuration uses the same three files as the GUI:
 - **`settings.json`** holds toggles: `notify`, `verbose`, `auto_start`, `device`.
 - **`profiles.json`** holds your profiles — each with its own `model`, `asr_model`, `format_model`, `system_prompt`, and `hotkey`. There is no global `MODEL` or `HOTKEY` env var; transcription settings live per-profile.
 
-Copy the regenerated `.env.example` / `settings.json.example` / `profiles.json.example` siblings as starting points. On a server where global hotkeys aren't available, trigger a profile with `phonetic --trigger <name>` (e.g. from a keybind daemon or a script).
+Configure it without any UI using `phonetic config …` (see [Configure from the command line](#configure-from-the-command-line)), or copy the regenerated `.env.example` / `settings.json.example` / `profiles.json.example` siblings as starting points. On a server where global hotkeys aren't available, trigger a profile with `phonetic --trigger <name>` (e.g. from a keybind daemon or a script). Run `phonetic doctor` to check the daemon, clipboard, and hotkey backend at a glance.
 
 > Toggles can still be overridden by environment variables for quick experiments: `NOTIFY`, `VERBOSE`, `AUTO_START`. Secrets and per-profile model settings are file-only.
 
@@ -186,14 +228,14 @@ phonetic --trigger <profile>          # <profile> = the profile NAME or its id
 `<profile>` is the profile's **name** (its identity, e.g. `phonetic --trigger Work`; quote names with spaces). To see exactly what to bind, run:
 
 ```bash
-phonetic --list-profiles
+phonetic config list      # (or the equivalent alias: phonetic --list-profiles)
 ```
 
 which prints each profile's name, hotkey, and the ready-to-bind trigger command. This gives full per-profile parity on Wayland — every profile records with its own model and prompt, exactly like a native hotkey on X11/macOS. There is no default profile and no single shared trigger.
 
 ### NixOS (declarative compositor bindings)
 
-Phonetic runs as a headless user service (`services.phonetic.enable = true`); the hotkeys live in your **compositor** config, one binding per profile. Examples (replace keys/names with your profiles from `phonetic --list-profiles`):
+Phonetic runs as a headless user service (`services.phonetic.enable = true`); the hotkeys live in your **compositor** config, one binding per profile. Examples (replace keys/names with your profiles from `phonetic config list`):
 
 **Hyprland** (home-manager):
 
