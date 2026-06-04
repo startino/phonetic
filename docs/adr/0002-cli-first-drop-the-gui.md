@@ -1,9 +1,10 @@
-# ADR 0002: v0.7 — go CLI-first and drop the desktop GUI
+# ADR 0002: v0.7 — invert to a CLI-first core with an optional UI
 
-- Status: Proposed
+- Status: Accepted (direction set 2026-06-04); implementation sub-decisions
+  (tray, UI toolkit) still open
 - Date: 2026-06-04
-- Supersedes parts of: the tray + settings-window UX (ADR 0001 is unaffected;
-  the two-stage pipeline stays)
+- Affects: app entry point, config layer, tray, settings window. ADR 0001
+  (two-stage pipeline) is unaffected.
 
 ## Context
 
@@ -26,115 +27,134 @@ PyObjC block-signature registration, `pynput`'s `CGEventTap` needing Input
 Monitoring, `pynput` listeners crashing on Sequoia from a background thread,
 Option-key character composition, AppTranslocation, and the
 `com.apple.provenance` dylib block. The dependency surface the GUI pulls in
-(`pystray`, `customtkinter`, `Pillow`, `pyobjc-framework-Cocoa`,
-`pyobjc-framework-ApplicationServices`) is the largest and most fragile part of
-the build, and the bundling (`packaging/phonetic.spec`, the whole macOS
-install-testing chapter in `CLAUDE.md`) exists mostly to ship it.
+(`pystray`, `customtkinter`, `Pillow`, the `pyobjc` frameworks) is the largest
+and most fragile part of the build.
 
-Meanwhile the daemon face has matured to where it can stand alone: there is no
-default profile, no global model/hotkey, config is three purpose-scoped files,
-and triggers resolve by readable profile **name** (ADR-adjacent work through
-v0.6.12). Editing a JSON file and binding a shortcut is the whole interaction.
+The deeper problem is **the dependency direction is inverted.** `app.py`'s
+primary path *is* the tkinter mainloop; `--headless` is a branch off it. So the
+core effectively depends on the GUI, when it should be the other way around.
 
-**The key constraint that shapes this ADR:** dropping the GUI is *not* the same
-as dropping the macOS `.app` bundle. macOS microphone permission (TCC) attaches
-to an application's **own** bundle identity (`no.starti.phonetic`) and the grant
-dialog only appears when the app is a **foreground** app. `_check_mic_permission`
-(`app.py:631`) already does this with AppKit directly — `NSApplication`
-`setActivationPolicy_(Regular)` + `activateIgnoringOtherApps_` + AVFoundation —
-and that code needs **AppKit, not customtkinter**. A bare CLI binary launched
-from a terminal would request permission under the *terminal's* TCC identity, not
-Phonetic's, and could not show its own dialog. So on macOS the app must remain a
-bundled `.app` with an AppKit moment for the one-time mic grant; it does not need
-a tray or a settings window.
+**The constraint that bounds the redesign:** dropping GUI *frameworks* is not the
+same as dropping the macOS `.app` bundle. macOS microphone permission (TCC)
+attaches to an application's **own** bundle identity (`no.starti.phonetic`) and
+the grant dialog only appears when the app is a **foreground** app.
+`_check_mic_permission` (`app.py:631`) already does this with **AppKit, not
+customtkinter** — `NSApplication setActivationPolicy_(Regular)` +
+`activateIgnoringOtherApps_` + AVFoundation. A bare CLI launched from a terminal
+would request permission under the *terminal's* identity and could not show its
+own dialog. So macOS keeps a bundled `.app` and a small AppKit moment for the
+one-time mic grant; it does not need a tray or a settings window.
 
-## Decision (proposed)
+## Decision
 
-Make the config-driven daemon the product on every platform and remove the
-desktop GUI. Concretely:
+Invert the architecture: the **CLI/daemon is the self-sufficient core**, and any
+**GUI is an optional, thin client built on top of it.**
 
-### Remove
-- `phonetic/tray.py` (pystray tray icon + menu).
-- `phonetic/ui/settings.py` (customtkinter settings window / first-run wizard).
-- The tkinter mainloop and GUI message-pump branch in `app.py`.
-- Dependencies: `pystray`, `customtkinter`, `Pillow`, and the customtkinter-only
-  use of tkinter. (PyObjC stays on macOS — see below.)
+### Core principle — the core is *areliant*; the UI is optional and one-way
 
-### Keep
-- The headless daemon, the three-file config model, `--trigger <name>`,
-  `--list-profiles`, per-profile hotkeys, the two-stage pipeline (ADR 0001), and
-  all logging.
-- On macOS: the **`.app` bundle** and the **AppKit mic-permission shim**
-  (`_check_mic_permission`) — minus tkinter coupling. Carbon
-  `RegisterEventHotKey` (`quickmachotkey`, `hotkeys.py`) already needs no
-  permissions and is GUI-independent.
+- The core (daemon, config, transcribe, hotkeys, and the `phonetic` CLI verbs)
+  **never imports or depends on any UI code.** Phonetic can be run and **fully
+  configured** — every profile, model, hotkey, and toggle — with the UI never
+  installed and never opened, using config files and `phonetic config` directly.
+- The UI is a **thin client that consumes the CLI/config layer** — it "just
+  happens to use the CLI": it calls the same primitives the CLI does and edits
+  the same JSON files. The dependency arrow points one way only:
+  **UI → core, never core → UI.**
+- Core and UI are **completely separable.** The core ships and works standalone;
+  the UI is an optional add-on whose presence can never change what the core can
+  do. Opening the UI is always a choice, never a requirement.
 
-### Add (the CLI surface that replaces the settings window)
-- `phonetic config` — a small TTY editor / printer for the three config files
-  (`phonetic config list`, `phonetic config add-profile`,
-  `phonetic config edit <name>`, `phonetic config path`). This is the
-  replacement for the settings GUI; it manipulates the same JSON the GUI did.
-- `phonetic grant-mic` (macOS) — briefly becomes a foreground app and triggers
-  the AVFoundation TCC dialog, then exits. The documented one-time first-run step.
-- `phonetic doctor` — prints permission/hotkey/clipboard/daemon status (it already
-  has most of these checks internally; surface them).
+### What this means for the code
+
+- **Invert `app.py`.** The daemon event loop becomes the trunk that `main` runs.
+  Launching the settings/config UI becomes an optional path that the core does
+  not import at module load.
+- **Give config a headless API + CLI.** Extract *all* config mutation out of
+  `ui/settings.py` into pure functions in the core (`config.py` / a `config_ops`
+  module) plus a `phonetic config` CLI (`list`, `add-profile`, `edit <name>`,
+  `remove <name>`, `path`). The settings window owns **no** config logic of its
+  own — it calls these.
+- **Shrink the UI to presentation.** A configuration window that simply surfaces
+  the files, plus (macOS) the first-run mic-permission grant. It carries no
+  behavior the CLI lacks.
+- **Keep the macOS `.app` + AppKit mic shim** (TCC needs the bundle identity + a
+  foreground moment), reachable headlessly via `phonetic grant-mic` so even
+  permission is not UI-gated.
+
+### Likely dropped (separate, lower-stakes calls)
+
+- The **pystray tray** is a persistent-process visual affordance and a source of
+  background-thread bugs; it is part of the optional UI surface, not the core,
+  and is a candidate for removal. Deferred as its own decision.
+- Heavy GUI deps (`customtkinter`, `Pillow`, `pystray`) are kept **only** if the
+  optional UI is retained; the **core build carries none of them.**
 
 ### Per-platform end state
-- **Linux:** already here. Document the headless service + compositor/DE keybind
-  to `phonetic --trigger <name>` as *the* setup. No change to behavior.
-- **Windows:** drop the tray/settings; run as a background process with `pynput`
-  global hotkeys (already implemented) or document AutoHotkey →
-  `phonetic --trigger`. Windows mic permission is per-app in Settings and rarely
-  blocks.
-- **macOS:** ship the same `.app`, but headless — no tray, no settings window.
-  First run: `phonetic grant-mic` once (or auto-run it on first launch with a
-  foreground moment). Hotkeys via Carbon (permission-free). Config by editing
-  JSON or `phonetic config`.
+
+- **Linux:** daemon + compositor/DE keybind to `phonetic --trigger <name>`
+  (already the default). Optional config UI on top.
+- **Windows:** background process + `pynput` global hotkeys (already implemented)
+  or AutoHotkey → `phonetic --trigger`. Optional config UI on top.
+- **macOS:** headless `.app`; optional config UI; first-run `phonetic grant-mic`;
+  Carbon `RegisterEventHotKey` (permission-free) for hotkeys.
+
+## Resolved decision (2026-06-04, operator)
+
+**Keep a minimal, optional configuration UI** (plus the macOS first-run helper),
+under the strict areliant principle above. The operator's framing:
+
+> A UI intently designed for configuration of Phonetic (essentially just exposing
+> the files in a UI) sounds nice. But the CLI and UI must be completely
+> disconnected. I could never open the UI and still configure just by files. The
+> UI just happens to use the CLI itself. The CLI should be *areliant* (not
+> reliant) on the UI.
+
+So v0.7 is **not** "delete the GUI." It is "make the core stand entirely on its
+own and demote the UI to an optional client." The deletion that remains in scope
+is only what is genuinely UI-only and fragile (tray) and the config *logic*
+currently trapped inside `ui/settings.py`, which **moves into the core** rather
+than being deleted.
+
+Remaining sub-decisions (mine to propose, non-blocking): whether to keep the tray
+at all, and whether the optional UI stays `customtkinter` or is rebuilt lighter.
 
 ## Consequences
 
 ### Positive
-- Deletes ~900+ lines of the most fragile code and the heaviest, most
-  platform-specific dependencies. The entire `pynput`-on-Sequoia,
-  tkinter-before-AppKit, and tray-thread class of bugs disappears.
-- One interaction model across platforms: files + a keybind. Easier to test
-  (the daemon path is already the tested path) and to bundle.
-- The macOS install story shrinks: still a `.app` for TCC, but no GUI frameworks
-  to bundle or sign around.
+- The fragile parts (tray threads, tkinter-before-AppKit ordering, pynput-on-
+  Sequoia, GUI bundling) stop being load-bearing — the core never touches them.
+- The core is independently testable and shippable; the daemon path (already the
+  tested path) becomes the only required path.
+- Configuration has a real headless surface (`phonetic config`), so automation,
+  servers, and dotfile-driven setups are first-class — not a GUI afterthought.
 
 ### Negative / accepted
-- **Onboarding gets more technical**, most sharply on macOS/Windows, where the
-  GUI was the zero-config front door. A first-time non-technical user now edits a
-  JSON file (or runs `phonetic config`) and binds a shortcut. `phonetic config`
-  softens this but does not match a point-and-click settings window.
-- **Windows/macOS gain a soft dependency on a keybind tool** where the profile's
-  own hotkey isn't sufficient (AutoHotkey / skhd), mirroring the Wayland model.
-- Removing the tray removes the only persistent visual affordance that the app is
-  running; `phonetic doctor` and notifications become the status surface.
+- The UI must be **rebuilt as a pure client.** Today `ui/settings.py` owns config
+  logic; pulling that into the core and leaving the window as presentation-only is
+  real work, not just deletion.
+- A residual GUI surface remains to maintain (the operator chose this over a
+  files-only product), so the dependency/bundling cost does not go to zero on
+  platforms that ship the UI.
 
-## Open question (needs an architect decision before implementation)
+## Implementation phasing
 
-**Is a config-file-first experience (no settings GUI) acceptable for Phonetic's
-target users on macOS/Windows?**
+1. **Decouple config.** Extract all config read/write out of `ui/settings.py`
+   into pure core functions + a `phonetic config` CLI; cover with tests. The UI
+   keeps working but now calls these.
+2. **Invert the entry point.** Make the daemon loop the trunk in `app.py`; the
+   settings/permission UI becomes an optional, lazily-imported path. The core
+   imports no UI module.
+3. **Headless permission + status.** Add `phonetic grant-mic` and
+   `phonetic doctor`; decouple `_check_mic_permission` from tkinter init ordering.
+4. **Trim the optional UI.** Decide the tray's fate; shrink the settings window
+   to a pure file-surfacing client; drop unused GUI deps from the core build.
+5. **Docs.** Rewrite README setup per platform; update the macOS chapter in
+   `CLAUDE.md`.
 
-- If the audience is developer/technical: **yes** — ship CLI-first everywhere,
-  this ADR stands as written.
-- If non-technical desktop users matter on macOS/Windows: consider a **reduced
-  middle path** — keep a *minimal* first-run permission+profile helper on macOS
-  (a single AppKit window, no customtkinter) purely for the mic grant and a
-  "create your first profile" step, then hand off to files. This keeps the
-  hardest onboarding moment graphical without reintroducing the tray/settings
-  surface.
+## Verification of the invariant
 
-This is the one call that can't be cheaply reversed (it decides how much GUI
-code survives), so it should be made before the deletion work starts.
-
-## Rough phasing (once the open question is resolved)
-1. Extract config mutation out of `ui/settings.py` into a headless `config`
-   CLI; cover with tests.
-2. Add `phonetic grant-mic` / `phonetic doctor`; decouple `_check_mic_permission`
-   from any tkinter init ordering.
-3. Delete `tray.py`, `ui/settings.py`, GUI deps; trim `app.py` to the daemon
-   pump; update `packaging/phonetic.spec`.
-4. Rewrite the README setup sections per platform; update the macOS install
-   chapter in `CLAUDE.md`.
+The areliant principle is testable, so it should be enforced, not just asserted:
+a unit test that imports the core (`phonetic.app`, `phonetic.config`,
+`phonetic.transcribe`, `phonetic.hotkeys`, the `phonetic config` CLI) with the UI
+modules and GUI deps absent (or blocked in `sys.modules`) and asserts the daemon
+starts and config round-trips. If the core ever imports the UI, that test fails.
