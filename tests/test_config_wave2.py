@@ -22,6 +22,38 @@ def test_no_profiles_json_yields_empty_list(isolated_config, monkeypatch):
     assert cfg.profiles == []
 
 
+def test_duplicate_profile_ids_are_healed(isolated_config):
+    """Two profiles sharing an id (corrupt config) must not collapse onto the
+    first: _load_profiles reassigns fresh unique ids and persists the fix.
+
+    Regression: a duplicated profiles.json gave both 'r' and 'c' the same id,
+    so `--trigger c` (name->id) resolved back to profile r and every keybind
+    produced r's output.
+    """
+    from phonetic.config import _load_profiles
+    dup = "bb804489-6bd1-58d2-b80d-aaaeef817d07"
+    _profiles_path().write_text(json.dumps({"profiles": [
+        {"id": dup, "name": "r", "hotkey": "<ctrl>+<alt>+r", "system_prompt": "VIC"},
+        {"id": dup, "name": "c", "hotkey": "<ctrl>+<alt>+c", "system_prompt": "PLAIN"},
+    ]}), encoding="utf-8")
+
+    profiles = _load_profiles()
+    ids = [p.id for p in profiles]
+    assert len(set(ids)) == 2, "ids must be unique after heal"
+    assert profiles[0].id == dup, "first profile keeps the original id"
+    assert profiles[1].id != dup, "the duplicate is reassigned"
+    # Healed result is persisted, so a second load is already unique (idempotent).
+    assert [p.id for p in _load_profiles()] == ids
+
+
+def test_blank_profile_id_is_healed(isolated_config):
+    from phonetic.config import _load_profiles
+    _profiles_path().write_text(json.dumps({"profiles": [
+        {"id": "", "name": "x", "hotkey": "<ctrl>+<alt>+x"},
+    ]}), encoding="utf-8")
+    assert _load_profiles()[0].id, "blank id must be replaced with a real uuid"
+
+
 def test_no_default_profile_id_symbol():
     """The default-profile concept is gone; the symbol must not come back."""
     import phonetic.config as config_mod

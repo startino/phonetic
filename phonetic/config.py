@@ -233,10 +233,39 @@ def _load_profiles() -> list[Profile]:
         return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return [_profile_from_dict(d) for d in data.get("profiles", [])]
+        profiles = [_profile_from_dict(d) for d in data.get("profiles", [])]
     except Exception as e:
         print(f"[config] Could not read profiles.json: {e}", file=sys.stderr)
         return []
+
+    # Enforce id uniqueness. Every trigger path (a profile's own hotkey, the
+    # tray, and --trigger after name->id normalization) resolves a profile by
+    # id, returning the FIRST match. So a blank or DUPLICATED id silently
+    # collapses every colliding profile onto the first one — e.g. two profiles
+    # sharing an id make `--trigger c` record with profile r's model/prompt.
+    # Heal corrupt state by reassigning fresh ids, then persist so the fix is
+    # stable across restarts (and bindings-by-id stop aliasing).
+    seen: set[str] = set()
+    healed = False
+    for p in profiles:
+        if not p.id or p.id in seen:
+            old = p.id
+            p.id = str(uuid.uuid4())
+            healed = True
+            print(
+                f"[config] profiles.json: profile {p.name!r} had a "
+                f"{'blank' if not old else 'duplicate'} id {old!r}; "
+                f"reassigned {p.id!r}. Trigger profiles by name to be safe.",
+                file=sys.stderr,
+            )
+        seen.add(p.id)
+    if healed:
+        try:
+            path.write_text(_format_profiles_json(profiles), encoding="utf-8")
+        except Exception as e:
+            print(f"[config] could not persist healed profiles.json: {e}",
+                  file=sys.stderr)
+    return profiles
 
 
 def _load_settings() -> dict:
