@@ -324,11 +324,14 @@ def _run_config_command(args) -> int:
 
     if sub == "path":
         # Print BOTH resolved targets so the secrets/settings asymmetry is
-        # VISIBLE, not a silent trap.
-        print(f"secrets (.env):        {ops.secrets_path()}")
-        print(f"settings (settings.json): {ops.settings_path()}")
-        print(f"profiles (profiles.json): {ops.profiles_path()}")
-        print(f"config dir:            {ops.config_dir()}")
+        # VISIBLE, not a silent trap. Aligned columns so the paths line up.
+        for label, value in (
+            ("secrets (.env):", ops.secrets_path()),
+            ("settings (settings.json):", ops.settings_path()),
+            ("profiles (profiles.json):", ops.profiles_path()),
+            ("config dir:", ops.config_dir()),
+        ):
+            print(f"{label:<26}{value}")
         return 0
 
     if sub == "set-key":
@@ -351,7 +354,8 @@ def _get_version() -> str:
 
 
 def _list_profiles() -> None:
-    """Print configured profiles (name, id, hotkey) for binding compositor keys.
+    """Print configured profiles (name, hotkey, trigger command) for binding
+    compositor keys.
 
     On Wayland, each profile is triggered by a DE shortcut bound to
     `phonetic --trigger <name>`; this lists what to bind.

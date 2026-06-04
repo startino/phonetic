@@ -58,6 +58,14 @@ def microphone_status() -> str:
         return "unavailable"
 
 
+_DENIED_MESSAGE = (
+    "Microphone access is not granted. Phonetic needs it to record audio.\n"
+    "  1. Open System Settings -> Privacy & Security -> Microphone\n"
+    "  2. Find Phonetic and toggle it ON\n"
+    "  3. Run `phonetic grant-mic` again (or just start Phonetic)."
+)
+
+
 def grant_microphone() -> bool:
     """Ensure macOS microphone access, triggering the TCC dialog if undetermined.
 
@@ -149,11 +157,3 @@ def grant_microphone() -> bool:
         print(f"grant-mic: could not complete the microphone permission "
               f"request: {exc}", file=sys.stderr)
         return False
-
-
-_DENIED_MESSAGE = (
-    "Microphone access is not granted. Phonetic needs it to record audio.\n"
-    "  1. Open System Settings -> Privacy & Security -> Microphone\n"
-    "  2. Find Phonetic and toggle it ON\n"
-    "  3. Run `phonetic grant-mic` again (or just start Phonetic)."
-)
