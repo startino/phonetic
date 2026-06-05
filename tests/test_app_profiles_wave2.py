@@ -159,6 +159,9 @@ class _FakeRecorder:
     def peek_level(self):
         return 0.5
 
+    def peek_window_level(self):
+        return 0.5
+
 
 def test_profile_switch_while_recording(monkeypatch):
     app = App(headless=True)
