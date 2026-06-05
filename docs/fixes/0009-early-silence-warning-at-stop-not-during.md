@@ -55,7 +55,10 @@ Replaced the +1s one-shot with a repeating, generation-token-tagged monitor
 `threading.Timer` chain); deleted `_check_early_audio`. The live warning is now a
 fresh `"normal"` notification (no `replace`). The generation bumps in both
 `_start_recording` (new take) and `_stop_recording_and_transcribe` (kills old
-ticks), covering the profile-switch path. ADR 0003 records the invariant. All
+ticks), covering the profile-switch path; `_start_recording` also constructs a
+FRESH `SilenceMonitor()` per recording, so each take starts from clean state
+(the `reset()` method is a pure-class API used by the tests, not the
+per-recording mechanism in `app.py`). ADR 0003 records the invariant. All
 existing `log()`/`print` lines retained; the monitor adds per-tick level logging
 and a log when the warning fires.
 

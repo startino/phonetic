@@ -71,8 +71,11 @@ The implementation pins the following, each with its justification:
   profile-switch path (`app.py:408-420`) stops one recording and starts another in
   the same thread, keeping `is_recording` True across two distinct takes. The
   token is what stops a stale tick from recording N bleeding a warning into
-  recording N+1. The pure state machine is reset per recording in
-  `_start_recording`.
+  recording N+1. `_start_recording` constructs a FRESH `SilenceMonitor()` for
+  each take, so every recording starts from clean state (no carried-over
+  accumulator or latch). `SilenceMonitor.reset()` exists as a pure-class API and
+  is exercised by the tests, but the per-recording clean-state mechanism in
+  `app.py` is the fresh construction, not a `reset()` call.
 
 - **Post-stop check demoted to a backstop.** The whole-buffer peak warning at
   `app.py:484-495` is KEPT — it still catches a take shorter than the 5s gate the
