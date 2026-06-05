@@ -194,3 +194,97 @@ def test_same_profile_hotkey_while_recording_stops(monkeypatch):
     app._toggle_recording("Work")
     assert rec.is_recording is False
     assert rec._stops == 1
+
+
+# --- silence-tick threading-wrapper integration (the seam the daemon fix touched) -
+
+
+class _SilentWindowRecorder:
+    """Fake recorder that reports a constant sub-threshold window level, so the
+    SilenceMonitor accrues silence on every tick. Drives _silence_tick directly
+    (no real Timer) for deterministic, fast assertions."""
+
+    def __init__(self, level=0.0):
+        self.is_recording = True
+        self.sample_rate = 16000
+        self.device = None
+        self._level = level
+
+    def peek_window_level(self):
+        return self._level
+
+
+def _silence_app(monkeypatch, recorder):
+    """A headless App wired with a fresh SilenceMonitor and the given recorder,
+    _notify captured, and _schedule_silence_tick neutralized so the test controls
+    tick cadence by calling _silence_tick itself (no background daemon timers)."""
+    from phonetic.silence import SilenceMonitor
+
+    app = App(headless=True)
+    app._cfg = _cfg_with_profiles()
+    app._rec = recorder
+    app._silence = SilenceMonitor()  # threshold/warn_secs from constants
+    app._rec_generation = 1
+    notifications = []
+    monkeypatch.setattr(app, "_notify", lambda *a, **k: notifications.append((a, k)))
+    reschedules = []
+    monkeypatch.setattr(
+        app, "_schedule_silence_tick", lambda gen: reschedules.append(gen)
+    )
+    return app, notifications, reschedules
+
+
+def test_silence_tick_stale_generation_is_noop(monkeypatch):
+    """(a) A tick carrying a generation that no longer matches the current
+    recording must NOT warn and must NOT reschedule — the core of the daemon-
+    timer/profile-switch safety."""
+    rec = _SilentWindowRecorder(level=0.0)
+    app, notifications, reschedules = _silence_app(monkeypatch, rec)
+    app._rec_generation = 2  # current generation advanced past the tick's token
+
+    app._silence_tick(generation=1)  # stale
+
+    assert notifications == []      # did not warn
+    assert reschedules == []        # did not reschedule
+    assert rec.is_recording is True  # nothing aborted
+
+
+def test_silence_tick_warns_exactly_once_and_keeps_recording(monkeypatch):
+    """(b) With the current generation and sub-threshold windows, the warning
+    fires EXACTLY ONCE across many ticks (single-warning latch) and recording
+    continues (warn-don't-abort: is_recording stays True, no stop)."""
+    from phonetic.constants import SILENCE_WARN_SECS, SILENCE_POLL_SECS
+
+    rec = _SilentWindowRecorder(level=0.0)
+    app, notifications, reschedules = _silence_app(monkeypatch, rec)
+
+    # Enough ticks to cross the 5s gate several times over.
+    ticks = int(SILENCE_WARN_SECS / SILENCE_POLL_SECS) + 5
+    for _ in range(ticks):
+        app._silence_tick(generation=1)
+
+    assert len(notifications) == 1                  # exactly one warning
+    args, kwargs = notifications[0]
+    assert args[1] == "normal"                      # urgency normal
+    assert kwargs.get("replace", False) is False    # fresh notification, no replace
+    assert rec.is_recording is True                 # recording never aborted
+    # Each non-stale tick reschedules itself (the loop keeps the monitor alive).
+    assert reschedules == [1] * ticks
+
+
+def test_silence_tick_after_stop_is_inert(monkeypatch):
+    """(c) A tick after stop (is_recording False / _silence None) is inert."""
+    rec = _SilentWindowRecorder(level=0.0)
+    app, notifications, reschedules = _silence_app(monkeypatch, rec)
+
+    rec.is_recording = False
+    app._silence_tick(generation=1)
+    assert notifications == []
+    assert reschedules == []
+
+    # Also inert when the monitor was torn down (stop nulls _silence).
+    rec.is_recording = True
+    app._silence = None
+    app._silence_tick(generation=1)
+    assert notifications == []
+    assert reschedules == []
