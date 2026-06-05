@@ -16,6 +16,7 @@ class Recorder:
         self._frames: list[np.ndarray] = []
         self.is_recording = False
         self._cb_logged = False
+        self._peeked_frames = 0  # index into _frames already measured by peek_window_level
 
     def _callback(self, indata, frames, time_info, status):
         if status:
@@ -30,6 +31,7 @@ class Recorder:
         if self.is_recording:
             return
         self._frames.clear()
+        self._peeked_frames = 0
         self._q = queue.Queue()
         self._cb_logged = False
         try:
@@ -76,6 +78,38 @@ class Recorder:
         audio = np.concatenate(self._frames, axis=0)
         peak = float(np.max(np.abs(audio)))
         print(f"[recorder] peek_level: frames={len(self._frames)}, samples={audio.shape[0]}, peak={peak:.6f}")
+        return peak
+
+    def peek_window_level(self) -> float:
+        """Peak amplitude of ONLY the frames captured since the last call.
+
+        Unlike `peek_level` (a monotonic whole-buffer peak that latches high once
+        any frame is loud), this measures a moving WINDOW: it drains the queue
+        into `_frames` (so the final `stop()` keeps every sample — R5), then
+        returns `np.max(np.abs(...))` over just the NEW frames appended this call.
+        Returns 0.0 when no new frames arrived since the last call — a genuine
+        "this window was silent" signal, which is what the 5s-continuous-silence
+        detector needs. Frames are never dropped; only the measurement window
+        moves.
+        """
+        if not self.is_recording:
+            return 0.0
+        while not self._q.empty():
+            try:
+                self._frames.append(self._q.get_nowait())
+            except queue.Empty:
+                break
+        new = self._frames[self._peeked_frames:]
+        self._peeked_frames = len(self._frames)
+        if not new:
+            print(f"[recorder] peek_window_level: no new frames "
+                  f"(qsize={self._q.qsize()}, total_frames={len(self._frames)}, "
+                  f"cb_fired={self._cb_logged})")
+            return 0.0
+        audio = np.concatenate(new, axis=0)
+        peak = float(np.max(np.abs(audio)))
+        print(f"[recorder] peek_window_level: new_frames={len(new)}, "
+              f"samples={audio.shape[0]}, peak={peak:.6f}")
         return peak
 
     def stop(self) -> np.ndarray:
