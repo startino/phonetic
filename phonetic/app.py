@@ -545,9 +545,17 @@ class App:
         if self._root is not None:
             self._root.after(delay_ms, lambda: self._silence_tick(generation))
         else:
-            threading.Timer(
+            # DAEMON timer: the headless tick self-reschedules forever while
+            # recording, so a NON-daemon Timer would block interpreter shutdown
+            # (threading._shutdown() joins it, waiting out the pending delay ->
+            # the process hangs until SIGKILL / exit 137). A daemon thread does
+            # not hold exit; stale ticks are already inert via the generation
+            # token, so dropping the thread mid-delay loses nothing.
+            t = threading.Timer(
                 SILENCE_POLL_SECS, self._silence_tick, args=(generation,)
-            ).start()
+            )
+            t.daemon = True
+            t.start()
 
     def _silence_tick(self, generation: int) -> None:
         """One monitor tick: read the windowed level, feed the machine, warn once.
