@@ -64,6 +64,13 @@ class Recorder:
 
         Drains the internal queue into the frame buffer (same as stop() does)
         so frames are not lost.  Returns 0.0 if no frames yet.
+
+        LATENT COUPLING: peek_window_level() maintains the `_peeked_frames`
+        cursor and assumes ONLY it (not peek_level) is called during an active
+        recording. Both drain `_q` into `_frames`, so interleaving peek_level
+        here would advance `_frames` without moving the cursor, silently
+        widening the next peek_window_level() window. Do not call both on a live
+        recording; the monitor uses peek_window_level exclusively.
         """
         if not self.is_recording:
             return 0.0
