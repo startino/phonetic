@@ -16,3 +16,14 @@ DEFAULT_MODEL = "mistralai/voxtral-small-24b-2507"
 
 MIN_DURATION_SECS = 0.5
 WARN_DURATION_SECS = 300
+
+# Silence monitor (see docs/adr/0003-early-silence-warning.md).
+# Peak amplitude on the float32 [-1, 1] scale below which a window counts as
+# silent (~ -60 dBFS). Single source of truth: app.py's post-stop backstop and
+# the live monitor BOTH import this; comparison stays STRICT `<` so the
+# boundary value is NOT silent (matches the pre-existing `peak < 0.001`).
+SILENCE_PEAK_THRESHOLD = 0.001
+# Continuous sub-threshold seconds before the live warning fires (user's ask).
+SILENCE_WARN_SECS = 5.0
+# Monitor tick cadence (matches today's one-shot 1s).
+SILENCE_POLL_SECS = 1.0

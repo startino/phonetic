@@ -11,7 +11,13 @@ from .clipboard import copy_to_clipboard
 from .config import Config, Profile, load_config
 from .control import ControlChannel
 from .log import log as _log
-from .constants import MIN_DURATION_SECS, WARN_DURATION_SECS
+from .constants import (
+    MIN_DURATION_SECS,
+    WARN_DURATION_SECS,
+    SILENCE_PEAK_THRESHOLD,
+    SILENCE_POLL_SECS,
+    SILENCE_WARN_SECS,
+)
 from .hotkeys import HotkeyManager
 from .notifications import notify
 from .recorder import Recorder
@@ -28,6 +34,7 @@ if TYPE_CHECKING:
     # Type-only imports: evaluated by type checkers, never at runtime, so the
     # daemon trunk stays UI-free while the annotations below still resolve.
     from .tray import TrayManager
+    from .silence import SilenceMonitor
 
 
 class UnknownProfileError(Exception):
@@ -66,6 +73,8 @@ class App:
         self._poll_count = 0  # message poll counter for heartbeat logging
         self._msg_count = 0  # total messages processed
         self._recording_profile_id = ""  # profile id of the in-flight recording
+        self._rec_generation = 0          # monotonic id; bumped per recording
+        self._silence: Optional["SilenceMonitor"] = None  # per-recording machine
 
     def run(self) -> None:
         """Main entry point."""
@@ -458,15 +467,26 @@ class App:
         self._notify("Recording started", "low", persist=True)
         if self._tray:
             self._tray.set_state(True, self._recording_profile_id)
-        # Schedule early audio check after 1 second to catch silent input
-        if self._root is not None:
-            self._root.after(1000, self._check_early_audio)
-        else:
-            threading.Timer(1.0, self._check_early_audio).start()
+        # Start the continuous silence monitor for THIS recording. A monotonic
+        # generation token tags every scheduled tick so a stale tick from a
+        # prior recording (esp. after a profile-switch, which keeps is_recording
+        # True across two takes) is a no-op. See ADR 0003.
+        from .silence import SilenceMonitor
+        self._rec_generation += 1
+        self._silence = SilenceMonitor()   # threshold/warn_secs from constants
+        generation = self._rec_generation
+        _log(f"silence_monitor: started generation={generation} "
+             f"poll={SILENCE_POLL_SECS}s warn={SILENCE_WARN_SECS}s "
+             f"threshold={SILENCE_PEAK_THRESHOLD}")
+        self._schedule_silence_tick(generation)
 
     def _stop_recording_and_transcribe(self, profile_id: str = "") -> None:
         """Stop the current recording and hand audio to the transcribe worker."""
         print("Stopping, processing...")
+        # Invalidate any in-flight silence tick for the recording being stopped
+        # so it cannot warn into the next recording (profile-switch path).
+        self._rec_generation += 1
+        self._silence = None
         audio = self._rec.stop()
         _log(f"toggle_recording: stopped, audio shape={audio.shape}, size={audio.size} "
              f"profile_id={profile_id!r}")
@@ -486,7 +506,7 @@ class App:
         # transcribes fine despite a low float32 peak
         peak = float(np.max(np.abs(audio)))
         _log(f"toggle_recording: peak={peak:.6f}, duration={audio.shape[0]/self._rec.sample_rate:.2f}s")
-        if peak < 0.001:
+        if peak < SILENCE_PEAK_THRESHOLD:
             if sys.platform == "darwin":
                 msg = "Audio may be silent — check microphone permissions"
             else:
@@ -513,20 +533,58 @@ class App:
         )
         thread.start()
 
-    def _check_early_audio(self) -> None:
-        """Check audio level after 1s of recording and warn if silent."""
-        if self._rec is None or not self._rec.is_recording:
+    def _schedule_silence_tick(self, generation: int) -> None:
+        """Schedule one silence-monitor tick on the correct thread for the mode.
+
+        GUI: tkinter `after` on the mainloop (lock-free, mirrors _poll_messages).
+        Headless: a self-rescheduling threading.Timer chain (there is no mainloop
+        between _msg_queue.get() calls). Both carry the generation token so a tick
+        outliving its recording is inert.
+        """
+        delay_ms = int(SILENCE_POLL_SECS * 1000)
+        if self._root is not None:
+            self._root.after(delay_ms, lambda: self._silence_tick(generation))
+        else:
+            threading.Timer(
+                SILENCE_POLL_SECS, self._silence_tick, args=(generation,)
+            ).start()
+
+    def _silence_tick(self, generation: int) -> None:
+        """One monitor tick: read the windowed level, feed the machine, warn once.
+
+        Inert (returns immediately, does NOT reschedule) when the recording this
+        tick belongs to is no longer current — stale generation, recorder gone,
+        or recording stopped. Otherwise reads the WINDOWED peak (not the latching
+        whole-buffer peek), feeds SILENCE_POLL_SECS as dt, and on the single
+        threshold-crossing emits ONE noticeable warning. Recording always
+        continues (warn-don't-abort). Reschedules itself while still recording.
+        """
+        if (
+            generation != self._rec_generation
+            or self._rec is None
+            or not self._rec.is_recording
+            or self._silence is None
+        ):
+            _log(f"silence_tick: stale/stopped (gen={generation} "
+                 f"cur={self._rec_generation}) — no-op")
             return
-        peak = self._rec.peek_level()
-        _log(f"early_audio_check: peak={peak:.6f}")
-        if peak < 0.001:
-            _log("early_audio_check: low audio level — warning (recording continues)")
+        level = self._rec.peek_window_level()
+        should_warn = self._silence.feed(level, SILENCE_POLL_SECS)
+        _log(f"silence_tick: gen={generation} level={level:.6f} "
+             f"warn={should_warn}")
+        if should_warn:
+            _log("silence_tick: 5s continuous silence — warning "
+                 "(recording continues)")
             if sys.platform == "darwin":
-                msg = "Low/no audio — check microphone permissions in System Settings"
+                msg = "No audio detected — check microphone permissions in System Settings"
             else:
-                msg = "Low/no audio — check that your mic is not muted"
+                msg = "No audio detected — check that your mic is not muted"
             print(msg, file=sys.stderr)
-            self._notify(msg, "normal", replace=True)
+            # NOTEWORTHY: urgency "normal", FRESH notification (NO replace) so it
+            # is not buried in the low-urgency "Recording started" bubble (the
+            # original invisibility bug, diagnosis 3b).
+            self._notify(msg, "normal")
+        self._schedule_silence_tick(generation)
 
     def _transcribe_worker(self, audio: np.ndarray, sample_rate: int, profile_id: str) -> None:
         """Run transcription in a background thread and post result back.
