@@ -1,8 +1,16 @@
-<!-- station-agent-docs-start -->
+<!-- station-rules-start -->
 
-<!-- station-section:rs77q871pfvfmbmd1fhm6yxxvn86gv5f@a73f7ed846918987 -->
-<!-- section-name: Rebase Only (scope: platform) -->
-Linear history. Repo settings reject `--squash` and `--merge`; only `Rebase and merge` works. Use `gh pr merge <N> --rebase` or the Rebase-and-merge UI. Local `git pull` rebases by default (config below); never escape to `--no-rebase` or `git merge`.
+<!-- station-section:gh7nz14n0nf5e7pmpnnxrzvjy589bek7@a3012e33d51c5edb -->
+<!-- section-name: Merge with rebase, check Git state, and protect shared work (scope: platform) -->
+## Merge
+
+Merge each pull request with rebase.
+
+Use `gh pr merge <N> --rebase` or the Rebase and merge UI.
+
+Do not use `git merge`, `--merge`, `--squash`, or `--no-rebase`.
+
+Keep this configuration:
 
 ```sh
 [pull]
@@ -12,136 +20,378 @@ autosetuprebase = always
 [rebase]
     autoStash = true
 ```
-<!-- /station-section:rs77q871pfvfmbmd1fhm6yxxvn86gv5f -->
 
-<!-- station-section:rs77jeqs969qkcst6hca3w6bed86g5cd@642efec715796832 -->
-<!-- section-name: Env vars for secrets only — never toggles or config (scope: platform) -->
-Env vars are reserved for (a) real secrets that must never enter the DB (API keys, signing secrets, OAuth client secrets) and (b) irreducible boot-time context needed before any data layer is available (`PUBLIC_CONVEX_URL`, `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, credential dir paths). Nothing else.
+## Git check
 
-Feature flags, kill switches, behavioral toggles, prompt templates, default columns, model selections, debounce/retry tunables — anything a non-engineer might want to change — live in the web UI backed by Convex tables (`projects` per-project, `orgs` per-org, singleton `appSettings` for global). Migrating an existing env-var toggle: add the field to the right Convex table with the previous default, gate a mu
-tation by permission, surface in settings, delete the env-var read site. Tests are the only exception (test fixture switching modes via env var on fresh-process invocation).
-<!-- /station-section:rs77jeqs969qkcst6hca3w6bed86g5cd -->
+Before each Git task, run this command:
 
-<!-- station-section:rs70nw1619zft89chmpdt0nehx86n5a0@bf2ce9d0feff010e -->
-<!-- section-name: Autonomy (scope: platform) -->
-Now, I am going to go over who you are speaking to, because who you are speaking to isn't just anyone. So, I don't want you to be pair programming with the user.
+```sh
+git status -sb && echo '' && git diff --stat
+```
 
-The user is effectively an equity holder in whatever you're building. They are a stakeholder and should be talked to as such. And at best, they function as a technical architect. They should not be reviewing line-by-line decisions. They should not be reviewing code decisions. They should, if anything, be reviewing the technical architecture.
+## Shared work
 
-But even then, the best-case scenario is that they're not involved at all. If you can solve a problem through reading code, read code. If you can solve a problem in any way by yourself, solve it yourself. If you have solutions that you can implement, implement the solutions. The user should plainly be presenting you with problems, you are the solution-izer.
+Treat each unknown change as work from another agent.
 
-The less you need input from the user, the better. Please act as autonomously as possible. Use your sub-agents, use all the systems set in place for you, all your tools, everything you can to not have to ask the user questions. If you think there's a real risk for repercussions if the user is not consulted, of course, consult the user. But apart from that, do not consult the user. 
+Do not change it. Do not put it in a stash.
 
-Please try to maximize your own autonomy. You are very smart. You're using the most expensive of AI models. A lot of the time, your decisions might even be better than the user's because you have context of the code. The user does, however, have a better ability of high-level architecture. So the user could be consulted only for higher-level things, not for low-level, implementation-level things.
-<!-- /station-section:rs70nw1619zft89chmpdt0nehx86n5a0 -->
+If restoration takes more than 10 seconds, do not use a stash.
 
-<!-- station-section:rs73teynm12hnwthn67bz1tjwh86m48v@5521aa50b3b8bca6 -->
-<!-- section-name: Idempotency (scope: platform) -->
-Everything that can be idempotent should absolutely be idempotent. Try to rely as little on status flags, up-next signals, and things that need to be handed off and picked up as possible, and instead rely on idempotent crons and polling systems over state. 
+When these files change, commit them:
 
-I want as much as possible to be stateless and idempotent, that can run against whatever system is being worked on and correctly do it every single time. This will also cause the system to be much more testable because if it relies on stateful variables, it just exponentially multiplies the amount of tests that would need to be created and, more realistically, it multiplies the amount of edge cases which exist. 
+- `CLAUDE.md`
+- `AGENTS.md`
+- `.gitignore`
+- Generated files
+<!-- /station-section:gh7nz14n0nf5e7pmpnnxrzvjy589bek7 -->
 
-So, less state, more stateless and idempotent functionality.
-<!-- /station-section:rs73teynm12hnwthn67bz1tjwh86m48v -->
+<!-- station-section:gh7ny4zasd1ezt8cvrhfjkmrfx89aryy@cbb31a62d89e7b01 -->
+<!-- section-name: Limit environment variables (scope: platform) -->
+Use environment variables only for secrets and necessary start conditions.
 
-<!-- station-section:rs7fpp705geggzevbjymwjwff9870ty7@566f8c5c3e16b95e -->
-<!-- section-name: Delegate to `startino-{model}-{effort}` subagents (scope: platform) -->
-Any chain of tool calls (OTP sign-in, multi-step UI flow, poll deployment, scrape log) → delegate to a `startino-{model}-{effort}` subagent. Plans must name the delegation strategy.
+Secrets include API keys, signing secrets, and OAuth client secrets.
 
-Matrix: `{haiku,sonnet,opus}` × `{low,medium,high}` (+ `opus-xhigh`, `opus-max`). Pick BOTH axes deliberately — table in `skills/station/primitives/session.md`. Default `sonnet-low`/`sonnet-medium`; `sonnet-high`. `opus-*` for real judgment and skill, with coding should always be xhigh; `haiku-{low,medium}` for straightforward tasks. Never `general-purpose`.
+Start conditions include `PUBLIC_CONVEX_URL`, `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, and credential directory paths.
 
-Brief subagents like colleagues who walked in: URL, credentials path, what to watch for, exact answer form ("report under 200 words"). Exception: user actively watching the walk → drive in main.
-<!-- /station-section:rs7fpp705geggzevbjymwjwff9870ty7 -->
+Store all other settings in app.
+<!-- /station-section:gh7ny4zasd1ezt8cvrhfjkmrfx89aryy -->
 
-<!-- station-section:rs75txqh3q7zbfrth2k8w04bm9870etp@8d4be277afdad118 -->
-<!-- section-name: Work should never be paused indefinitely (scope: platform) -->
-The retry system is intentionally designed around a core principle of the platform:
+<!-- station-section:gh7mn7rvxs6cxdgzk2sk7aj6ax89cqs1@bda0f7626ea93141 -->
+<!-- section-name: Record domain terms, decisions, fixes, and Station documents (scope: platform) -->
+## Domain terms
 
-**Work should never be paused indefinitely.**
+Use `CONTEXT.md` only for selected domain terms.
 
-The system assumes continuous development and continuous improvement of the platform itself. Because of that, retries are designed to delay and back off intelligently — not permanently stop execution.
+Record one meaning for each term. Record its relations. Add an example dialogue.
 
-A failure state is not considered equivalent to “requires human intervention.” Errors are expected to be recoverable over time through fixes to the underlying system. The intended workflow is:
+Use `/shared/station/skills/station/guidance/context-format.md`.
 
-1. An item errors.
-2. The platform surfaces the failure.
-3. We identify and fix the root cause in the system itself.
-4. The item succeeds automatically on a future retry.
+## Decisions
 
-The retry mechanism exists specifically to support this autonomous recovery model.
+If all these conditions are true, create an ADR:
 
-The only valid reason for something to leave the autonomous execution flow is when it genuinely requires external human input or decision-making. In those cases, it should move into the “needs input” state.
+- The team cannot easily reverse the decision.
+- Future work needs the decision context.
+- The team selected one option and rejected another option.
 
-Even then, the long-term KPI of the platform is to minimize reliance on that state as much as possible. “Needs input” is a necessary transitional mechanism, not a normal operational destination.
+Use `/shared/station/skills/station/guidance/adr-format.md`.
 
-Because of this philosophy, systems should be designed to recover, retry, and self-heal wherever possible — not fail permanently. A crash-without-recovery approach works against the core architectural direction of the platform.
-<!-- /station-section:rs75txqh3q7zbfrth2k8w04bm9870etp -->
+## Fixes
 
-<!-- station-section:rs7b2mkgrv3hddqwc5ncq0kym9871n4c@4457a6f55a629d65 -->
-<!-- section-name: Playwright screenshots: omit filename, use the returned path (scope: platform) -->
-When calling `mcp__playwright__browser_take_screenshot`, **do not pass a `filename` argument**. The MCP routes auto-named files (e.g. `page-2026-05-19T13-24-07-651Z.png`) through its `--output-dir` and returns the absolute path it wrote to. User-supplied filenames take a different code path that resolves against the client workspace root — relative names scatter to the repo root, and absolute names only work if every caller remembers to make them absolute.
+Before diagnosis, use `docs_search` to find related fix records.
 
-**Rule:** call the tool with no `filename`. Use the returned absolute path to embed, copy, or inspect the file. The MCP physically cannot scatter in this mode.
+After root-cause investigation and correction, create a fix record.
 
-The only reason to pass `filename` is when you need a stable, predictable path *before* the call. That is rare. If you genuinely need it, pass an absolute path under `/shared/station/.data/prose-runs/${STATION_RUN_ID}/workspace/<service>/screenshots/<name>.png` (or `/shared/station/.data/tmp/playwright-mcp/<name>.png` for ad-hoc captures). Never a bare relative name. Never the repo root.
+A defect includes incorrect behavior, a regression, or a configuration error.
 
-Applies to `mcp__playwright__browser_take_screenshot` and `mcp__playwright__browser_snapshot` (its `filename` field behaves the same way). `mcp__playwright__browser_evaluate`'s `filename` follows the same rule.
+Do not create a fix record for a feature, refactor, document change, or simple text correction.
 
-**Why:** prior runs hit the relative-name pitfall and scattered ~30 PNGs across the repo root before anyone noticed; `git status` is still littered with deletes from the cleanup. Auto-named + returned-path is mechanically safe — agents can't get it wrong because the choice has been removed.
-<!-- /station-section:rs7b2mkgrv3hddqwc5ncq0kym9871n4c -->
+Record the symptom, affected system, root cause, evidence, rejected causes, correction, and commit.
 
-<!-- station-section:rs740daj8ww5at51nj4engjg6h871q4p@5469f82c2079c43c -->
-<!-- section-name: Never stash changes (scope: platform) -->
-There may be other agents working on the same project as you and at the same time as you. If you stash changes, you cause complete chaos. Do not ever stash changes, only work on your own changes. If you see unrelated changes or changes you don't recognize, do not stash them. Just leave them be. If they're preventing your tests or anything, it's better to use some skip test things to avoid messing with the other agent. If there is something in progress, it means another thing is working on it. Please don't disrupt other people's work.
-<!-- /station-section:rs740daj8ww5at51nj4engjg6h871q4p -->
+Use `/shared/station/skills/station/guidance/fixes-format.md`.
 
-<!-- station-section:rs75r626jfy1z22h6t5afqhakx87mb9g@0a9ec9f0202a85ce -->
-<!-- section-name: Skills are VERY useful, load all relevant ones and stick to their instructions. (scope: platform) -->
-You have to load relevant skills. Name + description are always preloaded — invoke (Skill tool) the moment the situation matches; don't wait to be asked. Trigger = the condition in italics.
+## Station documents
 
-### Station platform / infra
-- **station-hosting** — _touching deploys, daemons, the reconciler, or `/var/lib/station`._ Atomic-flip deploy topology, nix units, Convex memory guard.
-- **station-pr-flow** — _finished work in a worktree and need to ship it to `alpha`/prod._ PR → auto-merge → reconciler chain + the deploy gate.
-- **worktree-preview** — _need to browser-verify a UI/route/e2e change without disrupting prod vite or other agents._ Isolated SvelteKit dev server on a worktree.
-- **station-doctor** — _items look stuck/stalled or DoDs aren't publishing._ One kanban-health diagnostic pass.
-- **station-review** — _just finished a change and want to self-check it_ against repo Standards / Spec / Quality before shipping.
-- **station** — foundational: embodies the Startino run layer (`station run …`). Load when executing/authoring a Station run.
-- **open-prose** — foundational: embodies the OpenProse VM for `.prose.md` / `prose …` orchestration.
+Use `docs_add` to create a Station document.
 
-### Convex backend
-- **convex** — _doing Convex work but unsure which workflow._ Router to the right convex-* skill.
-- **convex-quickstart** — _starting a new Convex project or adding Convex to an app._
-- **convex-create-component** — _building a reusable component that owns its own tables._
-- **convex-migration-helper** — _schema validation failed, or fields/types/tables need changing or backfilling._ Widen-migrate-narrow.
-- **convex-performance-audit** — _a query/mutation is slow or expensive, OCC conflicts, high bytes read._
-- **convex-setup-auth** — _adding login/signup or protecting queries/mutations._
-- **convex-reactive-state** — _editing a Svelte form/textarea that reads+writes Convex._ (model-only)
+Use `docs_update` to change or retire a Station document.
 
-### Technique (reach for mid-task)
-- **delegate** — _a chain of investigation/tool-calls would bloat context._ Fan out to `startino-*` sub-agents.
-- **plan-delegate** — _a complex objective needs a multi-agent execution plan_ with dependencies + parallel paths.
-- **monitor-events** — _waiting on CI, a deploy, a build, a queue drain._ Use Monitor, never sleep+poll.
-- **env-files** — _about to read a `.env`/secret or run `printenv`._ Safety/redaction first (load BEFORE the read).
-- **hypotheses** — _a diagnosis is doubted (yours or the user's)._ Adversarial falsification across rival causes.
-- **code-principles** — _every time dealing with any code._ Shared vocabulary (idempotent, pure, stateless, derived…).
-<!-- /station-section:rs75r626jfy1z22h6t5afqhakx87mb9g -->
+Let Station select the document number.
 
-<!-- station-section:rs78h5v21kd09gfw57mq6kwqe587nrq2@9f7058d3508ad76f -->
-<!-- section-name: Human Interaction (scope: platform) -->
-To interact with the human operator, whom is a high level experienced technical architect and stakeholder. you must call AskUserQuestion. Simply ending your response is a sign you are COMPLETELY FINISHED. Do not end as done if you are not completely finished. Either continue your work or call AskUserQuestion.
+Commit the generated document with its related change.
+<!-- /station-section:gh7mn7rvxs6cxdgzk2sk7aj6ax89cqs1 -->
 
-When the human operator (I) propose something, your first duty is to judge whether it's a good
-idea, not to implement it. If you think it's wrong -- redundant,
-over-engineered, solving the wrong problem, or contradicted by something you
-can see that I can't -- say so plainly and argue the case before doing any
-work: "I advise against that, because X; the better path is Y."
+<!-- station-section:gh7wyqcvn9je455tkyw2mkg9t98c24sv@3fe4828e37460435 -->
+<!-- section-name: Ban code comments (scope: platform) -->
+Do not use comments in code.
 
-A proposal from me is an invitation to be challenged, not an order to comply.
-Agreeing with a bad idea and building it is a failure even though I asked for
-it; a well-argued objection -- whether it changes my mind or I overrule it
-with new context -- is the win. Do not soften or flatter to stay agreeable.
-I would rather be told I'm wrong and shown why than be handed what I asked
-for. Push back with reasons, then follow my final call.
-<!-- /station-section:rs78h5v21kd09gfw57mq6kwqe587nrq2 -->
+The ban includes line comments, block comments, documentation comments, docstrings, TODO notes, directives, notices, and commented-out code.
 
-<!-- station-agent-docs-end -->
+Delete each comment when you find it. Do not wait for a comment-removal task.
+
+Do not move comment text to another comment or document.
+
+Use names, types, interfaces, validation, errors, and module boundaries to show intent.
+
+The codebase is the context. Make the codebase legible. Make the architecture communicate intent.
+
+The work is complete only when the code contains no comments.
+<!-- /station-section:gh7wyqcvn9je455tkyw2mkg9t98c24sv -->
+
+<!-- station-section:gh7ra7r3vg7a28e87v357njvqh8c2gty@9cd590936360e86c -->
+<!-- section-name: Write a test only at operator request (scope: platform) -->
+Write a test only at the operator request.
+
+Do not create, change, or remove a test without that request.
+
+Design each test with the operator. Agree the scenario, the expected result, and the harmful regression that the test prevents.
+
+Record each approved test in `docs/tests` in the same change as the test.
+
+The approval record must name these five items:
+
+1. The test file.
+2. The approval date.
+3. The harmful regression that the test prevents.
+4. The scenario.
+5. The expected result.
+
+A test without a complete approval record is not approved. Remove it when you find it.
+<!-- /station-section:gh7ra7r3vg7a28e87v357njvqh8c2gty -->
+
+<!-- station-section:gh7htw7cjymgwsjgzv5amtyhfs8cn5kx@15ae9783f2eda142 -->
+<!-- section-name: Permit AUTH.md credentials for delegated authentication (scope: platform) -->
+Use `/shared/station/AUTH.md` credentials for authorized project authentication.
+
+You can pass these credentials to the active LLM and to delegated agents when this action is necessary to complete an authorized task.
+
+You can pass these credentials in browser tool calls when this action is necessary for authentication.
+
+Do not show a credential in operator communication, final answers, questions, handoffs, status reports, logs, screenshots, or repository files.
+
+Apply the `env-files` rules before you read or use the credentials.
+<!-- /station-section:gh7htw7cjymgwsjgzv5amtyhfs8cn5kx -->
+
+<!-- station-section:gh7gt76cchzghf2e241a58gqrh89bn02@bfc8a3693d982d61 -->
+<!-- section-name: Keep release versions equal (scope: project) -->
+The release version exists in these files:
+
+- `pyproject.toml`, in `[project] version`
+- `nix/package.nix`, in the `version` value for `pname = "phonetic"`
+
+For each release, set both files to the same semantic version.
+
+Commit both version changes together.
+
+A change to `pyproject.toml` does not change `nix/package.nix`.
+
+Different versions give the NixOS package an incorrect store-path version.
+<!-- /station-section:gh7gt76cchzghf2e241a58gqrh89bn02 -->
+
+<!-- station-section:gh7w8a9evbsv2c6qztr820v10s8cp9r8@64192eeafae7e635 -->
+<!-- section-name: Know the phonetic architecture and modules (scope: project) -->
+The `phonetic/` package holds the modules. They replace the older single `main.py` file.
+
+The entry point is `phonetic.__main__:main`. The `[project.scripts]` table in `pyproject.toml` declares it.
+
+`main.py` stays as a shim. It imports from `phonetic.__main__`.
+
+The application has two modes. GUI mode uses a pystray tray icon and a customtkinter settings window. Headless mode starts with `--headless`, or when no display is available.
+
+The threads have these functions:
+
+- The main thread runs the customtkinter main loop.
+- The tray runs in a daemon thread.
+- The hotkeys use a Carbon event handler on macOS, and a pynput daemon thread on Linux and Windows.
+- The transcription uses worker threads.
+
+`App._msg_queue` is the message queue. In GUI mode, `root.after(100, ...)` reads it.
+
+These modules have these functions:
+
+- `config.py` gives the configuration for each platform. macOS uses `~/Library/Application Support/Phonetic`. Windows uses `%APPDATA%\Phonetic`. Linux uses `~/.config/phonetic`.
+- `app.py` is the orchestrator. It sends the messages and holds the `toggle_recording` logic.
+- `tray.py` holds the pystray `TrayManager`. It makes the icon in the program.
+- `hotkeys.py` uses Carbon `RegisterEventHotKey` on macOS, pynput on Linux and Windows, and a `SIGUSR1` fallback on Linux.
+- `ui/settings.py` holds the `CTkToplevel` settings window. This window is also the first-run wizard.
+- `autostart.py` uses a LaunchAgent on macOS, the Registry on Windows, and an XDG `.desktop` file on Linux.
+
+These dependencies are necessary:
+
+- `quickmachotkey` on macOS only. It uses Carbon `RegisterEventHotKey` and needs no permission.
+- `pynput` for the Linux and Windows hotkeys. It replaced python-xlib on Linux.
+- `pystray` and `Pillow` for the tray icon.
+- `customtkinter` for the settings interface.
+- `pyobjc-framework-Cocoa` and `pyobjc-framework-ApplicationServices` on macOS only.
+<!-- /station-section:gh7w8a9evbsv2c6qztr820v10s8cp9r8 -->
+
+<!-- station-section:gh7x535segr1j534p8yrjf565x8cqgx9@2788881dca06bcb9 -->
+<!-- section-name: Build phonetic in the Nix dev shell (scope: project) -->
+Use the NixOS dev shell from `flake.nix`.
+
+The shell must supply `linuxHeaders`. The `evdev` dependency of `pynput` needs them.
+
+`C_INCLUDE_PATH` must contain the Linux headers. Without them, `evdev` does not compile.
+
+The PyInstaller specification is at `packaging/phonetic.spec`.
+
+The GitHub Actions release workflow is at `.github/workflows/release.yml`.
+
+Use these commands for development:
+
+- `uv run phonetic` starts GUI mode.
+- `uv run phonetic --headless` starts headless mode, which the systemd service uses.
+- `uv run phonetic --version` shows the version.
+- `./service.sh` controls the systemd service. It calls `phonetic --headless`.
+<!-- /station-section:gh7x535segr1j534p8yrjf565x8cqgx9 -->
+
+<!-- station-section:gh7vvrt468nh4v8kezm9f6ek698cpnc1@eba871f65ed7df22 -->
+<!-- section-name: Set each value correctly at its source (scope: project) -->
+Set each value correctly where the code makes it.
+
+Do not use a later layer to correct a wrong default. If a value must be X, set it to X at the source.
+
+Do not add an override in the user interface or in glue code to correct a value.
+
+An unnecessary override is not safe. If a person removes the override, the wrong behavior comes back without a signal.
+
+Do not accept a behavior that is correct only because a different part of the system corrects it.
+<!-- /station-section:gh7vvrt468nh4v8kezm9f6ek698cpnc1 -->
+
+<!-- station-section:gh7jq56k2cmz3egqez38gftk8d8cp66b@6d6e41a29fe59a0b -->
+<!-- section-name: Commit, verify, and release phonetic work (scope: project) -->
+Commit and push after you complete the work.
+
+Use a conventional commit prefix: `feat:`, `fix:`, `chore:`, or `docs:`.
+
+Make each commit atomic. Put a new module, its integration, and the build configuration in separate commits.
+
+Correct each warning, deprecation, and stale configuration that you find in tool output. Correct an old URL, a moved repository, a deprecation notice, and a lint warning as part of the current work. Do not leave it for later.
+
+After you complete the work, verify it as fully as you can. Run the code. Examine the CI status. Test the imports. Make sure the configuration syntax is correct.
+
+If the verification shows a failure, find the cause and correct it before you report that the task is complete.
+
+After each update, push a semantic version tag to start the GitHub Actions release workflow:
+
+```sh
+git tag vX.Y.Z && git push origin vX.Y.Z
+```
+
+After you push, make sure that GitHub Actions completed correctly. Use `gh run list --limit 1` and `gh run view`. If a run fails, find the cause and correct it before you report that the task is complete.
+
+Do not ask the operator to approve a routine decision. Do the work, verify it, and report the result.
+<!-- /station-section:gh7jq56k2cmz3egqez38gftk8d8cp66b -->
+
+<!-- station-section:gh7k7jsam0gdr52tdbxzzgvh5d8cqrwm@e8f97cb4e6be889c -->
+<!-- section-name: Instrument phonetic before you correct it (scope: project) -->
+Add instrumentation first. Correct the code second.
+
+Do not guess the cause. Add logging or diagnostics to show exactly where the pipeline fails before you change any logic.
+
+For an audio or binary pipeline, write the intermediate output to a file in `/tmp`, for example `/tmp/phonetic_debug.wav`. Then you can examine that output separately.
+
+When data moves through more than one stage, record the shape, the size, and the important properties at each boundary. This shows where the data becomes incorrect.
+
+After you apply a correction, run the code and make sure that the output changed.
+
+Keep each `log()` call in the codebase permanently. Add as many as you can.
+
+Do not remove a log call. In a bundled application build, stderr is not visible, so the logs are the only diagnostic source.
+<!-- /station-section:gh7k7jsam0gdr52tdbxzzgvh5d8cqrwm -->
+
+<!-- station-section:gh7k0cf2nf9kcykjkkqyr1xrh58cq437@32d48fbc680c7223 -->
+<!-- section-name: Clean macOS fully before each install test (scope: project) -->
+Do a full clean before each install test. Do not do a partial reinstall.
+
+The operator wants proof that the complete install flow operates from the start each time.
+
+Run this clean procedure first:
+
+```bash
+# FIRST: detach all DMG volumes (stale mounts cause wrong binary installs)
+hdiutil detach /Volumes/Phonetic 2>/dev/null; hdiutil detach "/Volumes/Phonetic 1" 2>/dev/null; hdiutil detach "/Volumes/Phonetic 2" 2>/dev/null; hdiutil detach "/Volumes/Phonetic 3" 2>/dev/null
+pkill -9 -f "phonetic" 2>/dev/null; pkill -9 -f "Phonetic" 2>/dev/null
+rm -rf ~/Applications/Phonetic.app /Applications/Phonetic.app
+rm -rf ~/"Library/Application Support/Phonetic" ~/.config/phonetic
+rm -f ~/Library/Preferences/no.starti.phonetic.plist ~/Library/Preferences/com.startino.phonetic.plist
+rm -f ~/Library/LaunchAgents/no.starti.phonetic.plist ~/Library/LaunchAgents/com.startino.phonetic.plist
+find ~/"Library/Application Support/CrashReporter" -name "phonetic_*" -delete 2>/dev/null
+find ~/Library/Logs/DiagnosticReports -name "phonetic-*" -delete 2>/dev/null
+rm -f /tmp/phonetic_startup.log /tmp/phonetic_debug.wav
+rm -f ~/Downloads/Phonetic.dmg ~/Downloads/Phonetic.zip 2>/dev/null
+defaults delete com.apple.dock recent-apps 2>/dev/null; killall Dock 2>/dev/null
+tccutil reset Microphone no.starti.phonetic 2>/dev/null; tccutil reset Accessibility no.starti.phonetic 2>/dev/null
+tccutil reset Microphone com.startino.phonetic 2>/dev/null; tccutil reset Accessibility com.startino.phonetic 2>/dev/null
+
+# Purge LaunchServices ghost entries (old DMG/dev builds show as duplicate apps in Launchpad/Spotlight)
+LSREG=/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister
+"$LSREG" -u /Applications/Phonetic.app 2>/dev/null
+"$LSREG" -u ~/Applications/Phonetic.app 2>/dev/null
+"$LSREG" -u /Volumes/Phonetic/Phonetic.app 2>/dev/null
+"$LSREG" -u "/Volumes/Phonetic 1/Phonetic.app" 2>/dev/null
+"$LSREG" -u "/Volumes/Phonetic 2/Phonetic.app" 2>/dev/null
+"$LSREG" -u "/Volumes/Phonetic 3/Phonetic.app" 2>/dev/null
+"$LSREG" -u ~/vcs/startino/phonetic/dist/Phonetic.app 2>/dev/null
+# Reset Launchpad to remove ghost icons
+defaults write com.apple.dock ResetLaunchPad -bool true; killall Dock 2>/dev/null
+
+# Verify — nothing should remain outside source repo, uv cache, and claude dirs
+find ~ /tmp -name "*phonetic*" -o -name "*Phonetic*" 2>/dev/null | grep -v "/vcs/" | grep -v "/.cache/uv/" | grep -v "/.claude/" | grep -v "/claude-cli-nodejs/"
+# Verify — only one (or zero) in Applications dirs
+find ~/Applications /Applications -maxdepth 1 -name "*Phonetic*" 2>/dev/null
+```
+
+Then install from the release:
+
+```bash
+gh release download vX.Y.Z --pattern "Phonetic.dmg" --dir ~/Downloads
+hdiutil attach ~/Downloads/Phonetic.dmg -nobrowse
+mkdir -p ~/Applications
+cp -R "/Volumes/Phonetic/Phonetic.app" ~/Applications/
+xattr -cr ~/Applications/Phonetic.app
+hdiutil detach /Volumes/Phonetic
+# Re-register in LaunchServices so Spotlight/Launchpad find it
+LSREG=/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister
+"$LSREG" -f ~/Applications/Phonetic.app
+open ~/Applications/Phonetic.app
+```
+<!-- /station-section:gh7k0cf2nf9kcykjkkqyr1xrh58cq437 -->
+
+<!-- station-section:gh7r0ts64a4951pnw2ncgfq5k98cq9aj@103ba9a1216f2d0a -->
+<!-- section-name: Obey the macOS install rules (scope: project) -->
+Always install to `~/Applications/`. Never install to `/Applications/`.
+
+On Sequoia, `/Applications/` has the `com.apple.provenance` extended attribute. That attribute stops an unsigned dylib.
+
+When you open a DMG, Finder can copy the application to `/Applications/` with a drag. After each install, examine both locations.
+
+After the clean procedure, make sure that only one copy is present:
+
+```sh
+find ~/Applications /Applications -maxdepth 1 -name "*Phonetic*"
+```
+
+A DMG stays attached at `/Volumes/Phonetic` after the install. Always detach it before you install again.
+
+macOS keeps a LaunchServices record when you open `Phonetic.app` from a DMG, from `/Applications/`, or from `dist/`. The record stays after you delete the application, and Launchpad and Spotlight then show a second Phonetic.
+
+To remove the record, use `lsregister -u <stale-path>`. Then run:
+
+```sh
+defaults write com.apple.dock ResetLaunchPad -bool true; killall Dock
+```
+
+The clean procedure does this.
+
+A build before approximately v0.5.20 used the bundle identifier `com.startino.phonetic`. The current identifier is `no.starti.phonetic`. Remove both identifiers from TCC, from the preferences, and from LaunchServices.
+<!-- /station-section:gh7r0ts64a4951pnw2ncgfq5k98cq9aj -->
+
+<!-- station-section:gh7p9gr0j04wwhz4v09pyknwq98cqhc2@a10e11dcde59e473 -->
+<!-- section-name: Know the macOS platform limits (scope: project) -->
+The bundle identifier is `no.starti.phonetic`.
+
+Sequoia sets an immutable `com.apple.provenance` extended attribute on an application in `/Applications`. It stops an unsigned dylib. Install to `~/Applications` instead.
+
+macOS translocates an application that starts from a DMG to a temporary path. dyld also stops that application. Copy the application out of the DMG first.
+
+A background application with `LSUIElement` cannot show a system permission dialog. Set `NSApplicationActivationPolicyRegular` and call `activateIgnoringOtherApps_` before you request a permission.
+
+Start `tk.Tk()` before you call `NSApplication.setActivationPolicy_`. In the other sequence, Tk stops with an unrecognized selector fault for `GetRGBA`.
+
+`requestAccessForMediaType_completionHandler_` fails with "Argument 3 is a block, but no signature available". Call `objc.registerMetaDataForSelector` to register the block type before you call the method.
+
+An open `sounddevice` `InputStream` does not start the macOS microphone permission dialog for a bundled application. Use the AVFoundation API directly.
+
+On macOS Sequoia, a `keyboard.Listener` or `GlobalHotKeys` object that starts from a background thread stops with `dispatch_assert_queue_fail` in `TSMGetInputSourceProperty`. Make each listener one time at startup. Do not stop a listener and make it again.
+
+On macOS, the Option key changes the character. As an example, Alt and R together give the character `®`. `GlobalHotKeys` from pynput cannot match that character. Match on the virtual key code instead.
+
+On macOS, `event.keycode` from tkinter holds the virtual key code in bits 24 to 31. Read it with `(event.keycode >> 24) & 0xFF`.
+
+pynput uses `CGEventTap`, which needs the Input Monitoring permission and not the Accessibility permission. An application with an ad-hoc signature cannot request that permission in the program, and it does not appear in System Settings for the user.
+
+Carbon `RegisterEventHotKey` needs no permission. Version v0.5.55 replaced pynput with quickmachotkey, which uses Carbon HIToolbox, on macOS. The API is deprecated, but it is the only method that needs no permission. Version v0.5.57 operated correctly on Tahoe 26.3.
+<!-- /station-section:gh7p9gr0j04wwhz4v09pyknwq98cqhc2 -->
+
+<!-- station-rules-end -->
