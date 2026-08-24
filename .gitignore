@@ -111,10 +111,14 @@ assets/icon_tray_recording.png
 .claude/
 
 # === STATION MANAGED BEGIN — DO NOT EDIT ===
-# Auto-written by web/src/lib/server/mcp-disk-sync/project-file-syncer.ts
+# Auto-written by services/api/src/station/daemons/project_file_janitor.py
 # Edit at /admin/settings/gitignore — rewrites happen within ~2s of save.
+.station-evidence/
+.cursor/mcp.json
 *.STATION_AUTO_MANAGED_DO_NOT_EDIT.md
 .mcp.json
-.dod-evidence/
+.agents/
+.claude/
+.codex/config.toml
 .station/
 # === STATION MANAGED END ===
