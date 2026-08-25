@@ -5,7 +5,7 @@ a profile, set the API key, flip a toggle — goes through here, and ONLY here. 
 settings UI (``ui/settings.py``) and the ``phonetic config`` CLI are both thin
 clients that call these primitives; neither assembles a ``Config`` or calls
 ``save_config`` itself. This single-writer discipline is what prevents the
-read-path/write-path drift class of bug (fix 0002): one place builds the on-disk
+read-path/write-path drift class of bug: one place builds the on-disk
 shape, so it can never diverge from what the daemon reads.
 
 Path resolution mirrors the daemon FILE-BY-FILE (the daemon's read paths are
@@ -26,9 +26,9 @@ straight to the JSON files via ``_load_profiles`` / ``_load_settings`` (never
 mutation is safe to call when the config dir / files do not yet exist (first-run
 parity with the wizard) — the writers create the dir as needed.
 
-Name is identity (fix 0007): add/edit/remove all route their result through the
+Name is identity: add/edit/remove all route their result through the
 ``_load_profiles`` healer, which collapses blank/duplicate names and persists the
-healed list. There is NO default profile (fix 0004): removing down to zero
+healed list. There is NO default profile: removing down to zero
 profiles is a legal state and stays legal.
 """
 
@@ -104,7 +104,7 @@ def _persist_through_healer(profiles: list[Profile]) -> list[Profile]:
 
     The healer (``_load_profiles``) collapses blank/duplicate names and rewrites
     the file in place, so the post-write read is the authoritative, healed view.
-    Routing every mutation through it is how name-is-identity (fix 0007) is kept:
+    Routing every mutation through it is how name-is-identity is kept:
     no mutation bypasses the healer.
     """
     _write_profiles(profiles)

@@ -1,4 +1,4 @@
-"""Regression tests for the early-silence warning (ADR 0003 / fix 0009).
+"""Regression tests for the early-silence warning (ADR 0003).
 
 The bug: the silence warning surfaced only at stop-time, never during the
 recording, because the one forward check was a single +1s shot over a *latching*

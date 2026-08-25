@@ -18,7 +18,7 @@ _DEBUG_WAV = "/tmp/phonetic_debug.wav"
 # threshold to get wrong. A prior bug used a 20 MB WAV-bytes threshold that sat
 # ABOVE the provider's real accept size, so a ~3.5-min 44.1 kHz recording
 # (18.2 MB WAV / 24.3 MB base64) slipped through unmodified and was rejected
-# upstream with an HTTP-200-wrapped 429. See docs/fixes/0001-*.
+# upstream with an HTTP-200-wrapped 429.
 _DOWNSAMPLE_RATE = 16_000
 
 # OpenRouter base URLs for the two endpoint families.
