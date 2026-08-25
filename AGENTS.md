@@ -77,8 +77,8 @@ Start conditions include `PUBLIC_CONVEX_URL`, `BETTER_AUTH_URL`, `BETTER_AUTH_SE
 Store all other settings in app.
 <!-- /station-section:gh7ny4zasd1ezt8cvrhfjkmrfx89aryy -->
 
-<!-- station-section:gh7mn7rvxs6cxdgzk2sk7aj6ax89cqs1@0fd5353ca79da381 -->
-<!-- section-name: Record domain terms, decisions, fixes, and Station documents (scope: platform) -->
+<!-- station-section:gh7mn7rvxs6cxdgzk2sk7aj6ax89cqs1@c48d13cca2ee5f36 -->
+<!-- section-name: Record domain terms, decisions, and Station documents (scope: platform) -->
 ## Domain terms
 
 Use `CONTEXT.md` only for selected domain terms.
@@ -96,20 +96,6 @@ If all these conditions are true, create an ADR:
 - The team selected one option and rejected another option.
 
 Use the `grill-with-docs` skill.
-
-## Fixes
-
-Use the diagnose skill for each defect. There is no other path to a correction.
-
-Do not correct a defect that you diagnosed by another method. Do not correct a defect that you did not diagnose.
-
-Before diagnosis, use `docs_search` to find related fix records.
-
-A defect includes incorrect behavior, a regression, or a configuration error.
-
-Do not create a fix record for a feature, refactor, document change, or simple text correction.
-
-The diagnose skill owns the fix record and its rules.
 
 ## Station documents
 
