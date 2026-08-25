@@ -8,6 +8,38 @@
         "mcp",
         "start"
       ]
+    },
+    "station": {
+      "command": "/var/lib/station/current/services/api/.venv/bin/python3",
+      "args": [
+        "-m",
+        "station.project_mcp_adapter",
+        "--endpoint",
+        "http://127.0.0.1:8125/mcp/eager",
+        "--project-capability",
+        "eyJwcm9qZWN0SWQiOiJqeDdmbnNrNmpuZG5nOXFmM2txOGptMTlyeDg2YzQ5MSIsInZlcnNpb24iOjF9.eqAiOzCQiUp-Asm4Tt1argsNRHBoTqC2yNw0b8MakfQ",
+        "--harness",
+        "cursor",
+        "--repository",
+        "/shared/repos/startino/phonetic"
+      ],
+      "type": "stdio"
+    },
+    "station-ops": {
+      "command": "/var/lib/station/current/services/api/.venv/bin/python3",
+      "args": [
+        "-m",
+        "station.project_mcp_adapter",
+        "--endpoint",
+        "http://127.0.0.1:8125/mcp/ops",
+        "--project-capability",
+        "eyJwcm9qZWN0SWQiOiJqeDdmbnNrNmpuZG5nOXFmM2txOGptMTlyeDg2YzQ5MSIsInZlcnNpb24iOjF9.eqAiOzCQiUp-Asm4Tt1argsNRHBoTqC2yNw0b8MakfQ",
+        "--harness",
+        "cursor",
+        "--repository",
+        "/shared/repos/startino/phonetic"
+      ],
+      "type": "stdio"
     }
   }
 }
