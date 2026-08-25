@@ -77,7 +77,7 @@ Start conditions include `PUBLIC_CONVEX_URL`, `BETTER_AUTH_URL`, `BETTER_AUTH_SE
 Store all other settings in app.
 <!-- /station-section:gh7ny4zasd1ezt8cvrhfjkmrfx89aryy -->
 
-<!-- station-section:gh7mn7rvxs6cxdgzk2sk7aj6ax89cqs1@c48d13cca2ee5f36 -->
+<!-- station-section:gh7mn7rvxs6cxdgzk2sk7aj6ax89cqs1@e077fb40494a1b51 -->
 <!-- section-name: Record domain terms, decisions, and Station documents (scope: platform) -->
 ## Domain terms
 
@@ -101,7 +101,9 @@ Use the `grill-with-docs` skill.
 
 Use `docs_add` to create a Station document.
 
-Use `docs_update` to change or retire a Station document.
+Use `docs_edit` to change, supersede, or withdraw an ADR.
+
+Use `docs_grill_edit` to correct a completed Grill exchange when the operator requests the correction.
 
 Let Station select the document number.
 
