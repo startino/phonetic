@@ -56,7 +56,7 @@ Start conditions include `PUBLIC_CONVEX_URL`, `BETTER_AUTH_URL`, `BETTER_AUTH_SE
 Store all other settings in app.
 <!-- /station-section:gh7ny4zasd1ezt8cvrhfjkmrfx89aryy -->
 
-<!-- station-section:gh7mn7rvxs6cxdgzk2sk7aj6ax89cqs1@bda0f7626ea93141 -->
+<!-- station-section:gh7mn7rvxs6cxdgzk2sk7aj6ax89cqs1@0fd5353ca79da381 -->
 <!-- section-name: Record domain terms, decisions, fixes, and Station documents (scope: platform) -->
 ## Domain terms
 
@@ -64,7 +64,7 @@ Use `CONTEXT.md` only for selected domain terms.
 
 Record one meaning for each term. Record its relations. Add an example dialogue.
 
-Use `/shared/station/skills/station/guidance/context-format.md`.
+Use the `domain-modeling` skill.
 
 ## Decisions
 
@@ -74,21 +74,21 @@ If all these conditions are true, create an ADR:
 - Future work needs the decision context.
 - The team selected one option and rejected another option.
 
-Use `/shared/station/skills/station/guidance/adr-format.md`.
+Use the `grill-with-docs` skill.
 
 ## Fixes
 
-Before diagnosis, use `docs_search` to find related fix records.
+Use the diagnose skill for each defect. There is no other path to a correction.
 
-After root-cause investigation and correction, create a fix record.
+Do not correct a defect that you diagnosed by another method. Do not correct a defect that you did not diagnose.
+
+Before diagnosis, use `docs_search` to find related fix records.
 
 A defect includes incorrect behavior, a regression, or a configuration error.
 
 Do not create a fix record for a feature, refactor, document change, or simple text correction.
 
-Record the symptom, affected system, root cause, evidence, rejected causes, correction, and commit.
-
-Use `/shared/station/skills/station/guidance/fixes-format.md`.
+The diagnose skill owns the fix record and its rules.
 
 ## Station documents
 
@@ -98,7 +98,9 @@ Use `docs_update` to change or retire a Station document.
 
 Let Station select the document number.
 
-Commit the generated document with its related change.
+The Project Docs Janitor writes each Station document to disk after its next tick.
+
+Commit each generated document change in a separate `docs(...)` commit.
 <!-- /station-section:gh7mn7rvxs6cxdgzk2sk7aj6ax89cqs1 -->
 
 <!-- station-section:gh7wyqcvn9je455tkyw2mkg9t98c24sv@3fe4828e37460435 -->
@@ -151,6 +153,29 @@ Do not show a credential in operator communication, final answers, questions, ha
 
 Apply the `env-files` rules before you read or use the credentials.
 <!-- /station-section:gh7htw7cjymgwsjgzv5amtyhfs8cn5kx -->
+
+<!-- station-section:gh7q9p8bafyk0jsnn298e0keq58cyd6a@0ccaede6b9327e02 -->
+<!-- section-name: Keep a skill to method, not to tool description (scope: platform) -->
+A skill states why, when, and the approach.
+
+A skill can mandate a tool, place the tool in the workflow, and instruct what to pass.
+
+Write each of these as an action at a moment. Do not write it as a description of the tool.
+
+Do not state the tool's capabilities. Do not state what the tool returns.
+
+Do not restate what the tool already requires and rejects.
+
+Do not restate a rule that already applies to every agent.
+
+Do not add a rule against behavior that an agent does not do.
+
+Reference a skill by its name. Do not reference a skill by a file path.
+
+A path reaches one file. A skill reaches its complete method.
+
+A file path belongs only inside the skill that owns the file.
+<!-- /station-section:gh7q9p8bafyk0jsnn298e0keq58cyd6a -->
 
 <!-- station-section:gh7gt76cchzghf2e241a58gqrh89bn02@bfc8a3693d982d61 -->
 <!-- section-name: Keep release versions equal (scope: project) -->
