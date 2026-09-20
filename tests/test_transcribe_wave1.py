@@ -109,7 +109,8 @@ def test_legacy_path_payload_unchanged(recording_client):
     # text == system_prompt, then input_audio. Exactly the legacy structure.
     assert content[0] == {"type": "text", "text": "FORMAT PROMPT"}
     assert content[1]["type"] == "input_audio"
-    assert content[1]["input_audio"]["format"] == "wav"
+    # mp3 when ffmpeg is available, wav when it is not (see audio_to_payload)
+    assert content[1]["input_audio"]["format"] in ("mp3", "wav")
     assert isinstance(content[1]["input_audio"]["data"], str)
     # Legacy path must NOT hit the audio/transcriptions endpoint.
     assert call["files"] is None
@@ -167,3 +168,28 @@ def test_two_stage_chat_asr_model(recording_client):
     asr_content = asr_call["json"]["messages"][0]["content"]
     assert asr_content[0]["text"] == tr._ASR_PROMPT
     assert asr_content[1]["type"] == "input_audio"
+
+
+# --- payload encoding: mp3 preferred, wav fallback -------------------------
+
+def test_payload_prefers_mp3_when_ffmpeg_present(recording_client, monkeypatch):
+    """The provider rejects large base64 WAV bodies with a misleading 429."""
+    import phonetic.transcribe as tr
+    monkeypatch.setattr(tr, "_encode_mp3", lambda audio, rate: b"ID3fake-mp3-bytes")
+    recording_client.responses = [
+        _FakeResponse({"choices": [{"message": {"content": "out"}}]})
+    ]
+    transcribe(_cfg(asr_model=""), _audio(), 16000)
+    audio_part = recording_client.calls[0]["json"]["messages"][0]["content"][1]
+    assert audio_part["input_audio"]["format"] == "mp3"
+
+
+def test_payload_falls_back_to_wav_without_ffmpeg(recording_client, monkeypatch):
+    import phonetic.transcribe as tr
+    monkeypatch.setattr(tr.shutil, "which", lambda name: None)
+    recording_client.responses = [
+        _FakeResponse({"choices": [{"message": {"content": "out"}}]})
+    ]
+    transcribe(_cfg(asr_model=""), _audio(), 16000)
+    audio_part = recording_client.calls[0]["json"]["messages"][0]["content"][1]
+    assert audio_part["input_audio"]["format"] == "wav"

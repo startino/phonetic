@@ -1,6 +1,8 @@
 import base64
 import io
 import json
+import shutil
+import subprocess
 
 import httpx
 import numpy as np
@@ -139,8 +141,48 @@ def _chat_text(data: dict, tag: str) -> str:
     return (choices[0] or {}).get("message", {}).get("content", "") or ""
 
 
+def _encode_mp3(audio: np.ndarray, sample_rate: int) -> bytes | None:
+    """Encode audio as 32kbps mono MP3 via ffmpeg, or None if ffmpeg is absent.
+
+    A base64 WAV body is ~22x larger than the same audio as MP3. Since
+    2026-09-18 the provider rejects the oversized WAV bodies outright (see
+    audio_to_base64), so MP3 is what keeps long recordings working.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        print("[transcribe] ffmpeg not found — falling back to WAV payload")
+        return None
+    wav_buf = io.BytesIO()
+    channels = audio.shape[1] if audio.ndim > 1 else 1
+    with sf.SoundFile(wav_buf, mode="w", samplerate=sample_rate, channels=channels,
+                      subtype="PCM_16", format="WAV") as f:
+        f.write(audio)
+    try:
+        proc = subprocess.run(
+            [ffmpeg, "-loglevel", "error", "-f", "wav", "-i", "pipe:0",
+             "-ac", "1", "-ar", str(_DOWNSAMPLE_RATE), "-b:a", "32k",
+             "-f", "mp3", "pipe:1"],
+            input=wav_buf.getvalue(), capture_output=True, timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"[transcribe] ffmpeg failed ({e}) — falling back to WAV payload")
+        return None
+    if proc.returncode != 0 or not proc.stdout:
+        err = proc.stderr.decode("utf-8", "replace")[:200]
+        print(f"[transcribe] ffmpeg returned {proc.returncode} ({err}) — WAV fallback")
+        return None
+    print(f"[transcribe] MP3 size: {len(proc.stdout)} bytes "
+          f"(WAV would be {wav_buf.tell()} bytes)")
+    return proc.stdout
+
+
 def audio_to_base64(audio: np.ndarray, sample_rate: int) -> str:
-    """Encode audio numpy array as base64 WAV string."""
+    """Encode audio numpy array as base64 WAV string.
+
+    Prefer _encode_mp3 for the send payload: the provider rejects large WAV
+    bodies with an HTTP 429 that reads like a rate limit but is really a
+    payload-size limit.
+    """
     buf = io.BytesIO()
     channels = audio.shape[1] if audio.ndim > 1 else 1
     with sf.SoundFile(buf, mode="w", samplerate=sample_rate, channels=channels,
@@ -150,6 +192,14 @@ def audio_to_base64(audio: np.ndarray, sample_rate: int) -> str:
     print(f"[transcribe] WAV size: {len(wav_bytes)} bytes, "
           f"channels={channels}, rate={sample_rate}Hz")
     return base64.b64encode(wav_bytes).decode("ascii")
+
+
+def audio_to_payload(audio: np.ndarray, sample_rate: int) -> tuple[str, str]:
+    """Return (base64 data, format) for the API, preferring MP3 over WAV."""
+    mp3 = _encode_mp3(audio, sample_rate)
+    if mp3 is not None:
+        return base64.b64encode(mp3).decode("ascii"), "mp3"
+    return audio_to_base64(audio, sample_rate), "wav"
 
 
 def transcribe(cfg: Config, audio: np.ndarray, sample_rate: int | None = None) -> str:
@@ -178,8 +228,8 @@ def transcribe(cfg: Config, audio: np.ndarray, sample_rate: int | None = None) -
     _save_debug_wav(audio, sample_rate, "transcribe")
     audio, sample_rate = _to_send_audio(audio, sample_rate, "transcribe")
 
-    audio_b64 = audio_to_base64(audio, sample_rate)
-    print(f"[transcribe] Base64 payload: {len(audio_b64)} chars")
+    audio_b64, audio_fmt = audio_to_payload(audio, sample_rate)
+    print(f"[transcribe] Base64 payload: {len(audio_b64)} chars (format={audio_fmt})")
 
     payload = {
         "model": cfg.model,
@@ -195,7 +245,7 @@ def transcribe(cfg: Config, audio: np.ndarray, sample_rate: int | None = None) -
                         "type": "input_audio",
                         "input_audio": {
                             "data": audio_b64,
-                            "format": "wav",
+                            "format": audio_fmt,
                         },
                     },
                 ],
@@ -278,8 +328,8 @@ def _run_asr(cfg: Config, audio: np.ndarray, sample_rate: int | None = None) -> 
 
     # Chat-style ASR model: minimal ASR-only prompt + input_audio, no formatting.
     print(f"[asr] model={cfg.asr_model!r} is chat-style → endpoint {_CHAT_URL}")
-    audio_b64 = audio_to_base64(audio, sample_rate)
-    print(f"[asr] Base64 payload: {len(audio_b64)} chars")
+    audio_b64, audio_fmt = audio_to_payload(audio, sample_rate)
+    print(f"[asr] Base64 payload: {len(audio_b64)} chars (format={audio_fmt})")
     payload = {
         "model": cfg.asr_model,
         "messages": [
@@ -289,7 +339,7 @@ def _run_asr(cfg: Config, audio: np.ndarray, sample_rate: int | None = None) -> 
                     {"type": "text", "text": _ASR_PROMPT},
                     {
                         "type": "input_audio",
-                        "input_audio": {"data": audio_b64, "format": "wav"},
+                        "input_audio": {"data": audio_b64, "format": audio_fmt},
                     },
                 ],
             },

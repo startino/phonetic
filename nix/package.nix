@@ -8,6 +8,7 @@
   libappindicator-gtk3,
   wl-clipboard,
   xclip,
+  ffmpeg-headless,
   libnotify,
   pipewire,
   portaudio,
@@ -61,6 +62,9 @@ python312Packages.buildPythonApplication rec {
         xclip
         libnotify
         pipewire
+        # transcribe.py shells out to ffmpeg to send MP3 instead of a
+        # base64 WAV body, which the provider rejects above ~1.5MB
+        ffmpeg-headless
       ]}
       --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [
         portaudio
